@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>單元1 史前文化與臺灣原住民 - 互動學習系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; background-color: #fffbeb; color: #431407; font-size: 1.125rem; line-height: 1.8; -webkit-tap-highlight-color: transparent; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-loading { background-color: #fbbf24; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; box-shadow: 0 0 8px #fbbf24; }
+        .status-success { background-color: #34d399; box-shadow: 0 0 8px #34d399; }
+        .status-error { background-color: #f87171; box-shadow: 0 0 8px #f87171; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .glass-nav { background: rgba(194, 65, 12, 0.9); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .glass-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        .knowledge-table { width: 100%; text-align: left; border-collapse: collapse; margin-top: 1rem; margin-bottom: 1rem; font-size: 1rem; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .knowledge-table th, .knowledge-table td { border: 1px solid #fed7aa; padding: 0.75rem; }
+        .knowledge-table th { background-color: #ffedd5; color: #9a3412; font-weight: bold; text-align: center; }
+        .knowledge-table tr:nth-child(even) { background-color: #fffbeb; }
+        .knowledge-table tr:hover { background-color: #ffedd5; transition: background-color 0.2s; }
+        .tag-badge { display: inline-block; padding: 0.5rem 1.25rem; border-radius: 9999px; font-weight: bold; font-size: 1.25rem; line-height: 1.75rem; margin-right: 0.75rem; margin-bottom: 0.75rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        @media (min-width: 768px) { .tag-badge { font-size: 1.5rem; line-height: 2rem; padding: 0.75rem 1.5rem; margin-right: 1rem; margin-bottom: 1rem; } }
+        .text-highlight { position: relative; display: inline-block; z-index: 1; }
+        .text-highlight::after { content: ''; position: absolute; left: 0; bottom: 0.2em; width: 100%; height: 0.4em; background-color: rgba(251, 191, 36, 0.5); z-index: -1; border-radius: 2px; }
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col overflow-hidden bg-amber-50">
+
+    <div id="app" class="w-full h-full flex flex-col overflow-hidden"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        //  Firebase Configuration & Constants
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAxQFt76ZPXE7d0i1XeNZ1yiiD2WYNIfHs", 
+            authDomain: "chinese-learning-47f4d.firebaseapp.com",
+            projectId: "chinese-learning-47f4d",
+            storageBucket: "chinese-learning-47f4d.firebasestorage.app",
+            messagingSenderId: "76289812052",
+            appId: "1:76289812052:web:898384a916f9f341f62fc1"
+        };
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'history-app-default';
+        const COLLECTION_NAME = 'Exam-History-1'; 
+        const DOC_GLOBAL = 'Global_Users';      
+        
+        let app, auth, db;
+        let isFirebaseInitialized = false;
+        let currentUser = null;
+        let username = '';
+        let userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+        let connectionStatus = 'loading';
+        let recentUsers = [];
+        let unsubscribeUser = null;
+        let unsubscribeGlobal = null;
+        
+        // ==========================================
+        //  Audio System (Lazy Init for iPad compatibility)
+        // ==========================================
+        let audioCtx = null;
+        const initAudio = () => {
+            if (!audioCtx) {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioCtx = new AudioContext();
+                } catch(e) { console.warn("AudioContext not supported"); }
+            }
+        };
+        const playTone = (freq, type, duration) => {
+            initAudio();
+            if(!audioCtx) return;
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                oscillator.type = type;
+                oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        };
+        const playCorrectSound = () => { playTone(523.25, 'sine', 0.1); setTimeout(() => playTone(659.25, 'sine', 0.2), 100); };
+        const playWrongSound = () => { playTone(300, 'sawtooth', 0.2); setTimeout(() => playTone(200, 'sawtooth', 0.3), 150); };
+
+        // ==========================================
+        //  Firebase Initialization
+        // ==========================================
+        try {
+            const actualConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+            if (actualConfig.apiKey && actualConfig.apiKey !== "填入key" && actualConfig.apiKey !== "YOUR_API_KEY") {
+                app = initializeApp(actualConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                isFirebaseInitialized = true;
+                connectionStatus = 'success';
+            } else { connectionStatus = 'error'; }
+        } catch (error) { connectionStatus = 'error'; }
+
+        const initAuth = async () => {
+            if (!isFirebaseInitialized) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+            } catch (error) { connectionStatus = 'error'; }
+        };
+
+        // ==========================================
+        //  Course Content (Learn Data)
+        // ==========================================
+        const learnData = [
+            {
+                id: 'sec1', title: '一、歷史的基礎觀念 ⏳', theme: 'orange',
+                content: `
+                <div class="space-y-8 text-2xl md:text-3xl text-gray-800">
+                    <div class="bg-gradient-to-br from-orange-50 to-amber-50 p-6 md:p-10 rounded-3xl border-l-8 border-orange-500 shadow-lg">
+                        <div class="text-center font-black text-4xl md:text-5xl text-orange-950 mb-8 border-b-2 border-orange-200 pb-4 flex justify-center items-center gap-4">
+                            <span class="text-5xl">⏳</span> 歷史的基礎觀念 <span class="text-5xl">🧭</span>
+                        </div>
+                        
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-orange-100 mb-8">
+                            <h3 class="font-bold text-3xl md:text-4xl text-orange-800 mb-4 flex items-center"><span class="bg-orange-200 p-2 rounded-lg mr-3 shadow-sm">1</span> 歷史的意涵 🤔</h3>
+                            <div class="overflow-x-auto rounded-xl shadow-sm border border-orange-200 bg-white mb-6">
+                                <table class="knowledge-table w-full text-xl md:text-2xl m-0 border-none">
+                                    <thead class="bg-orange-100 text-orange-900">
+                                        <tr>
+                                            <th class="p-4 w-1/4">類別</th>
+                                            <th class="p-4 w-1/4">歷史事實 📜</th>
+                                            <th class="p-4 w-1/4">歷史紀錄 📝</th>
+                                            <th class="p-4 w-1/4">歷史解釋 💬</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-orange-50 text-slate-700 font-medium">
+                                        <tr>
+                                            <td class="text-center font-bold bg-orange-50/50 text-orange-800">定義</td>
+                                            <td class="p-4 leading-relaxed">
+                                                ① 過去確實發生過的事件<br>
+                                                ② <strong>較客觀</strong> (不因時間或價值觀改變)
+                                            </td>
+                                            <td class="p-4 leading-relaxed">
+                                                以遺物、遺址或文字等方式，保存或記錄歷史事實
+                                            </td>
+                                            <td class="p-4 leading-relaxed">
+                                                ① 後人對歷史事實的詮釋、評論<br>
+                                                ② <strong>較主觀</strong> (容易因立場不同，產生差異)
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td class="text-center font-bold bg-orange-50/50 text-orange-800">舉例</td>
+                                            <td class="p-4 leading-relaxed">甲午戰爭後，清帝國將臺灣、澎湖割讓予日本。</td>
+                                            <td class="p-4 leading-relaxed">《馬關條約》：「中國將管理下開地方之權永遠讓與日本：……臺灣全島及所有附屬各島嶼。」</td>
+                                            <td class="p-4 leading-relaxed">
+                                                ① 觀點A：甲午戰爭後，臺灣不幸淪為日本帝國的殖民地。<br>
+                                                ② 觀點B：臺灣在日本統治下走向文明。
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h3 class="font-bold text-3xl md:text-4xl text-orange-800 mb-4 flex items-center mt-10"><span class="bg-orange-200 p-2 rounded-lg mr-3 shadow-sm">2</span> 歷史分期與紀年 📅</h3>
+                            <p class="text-xl md:text-2xl text-slate-700 leading-relaxed font-medium mb-4">
+                                <strong>分期意義：</strong>人們依據一些標準，劃定歷史分期，以大致掌握各時期的趨勢與特色。
+                            </p>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div class="bg-amber-50 p-4 rounded-xl border border-amber-200">
+                                    <h4 class="font-bold text-amber-900 mb-2">📌 依「文字有無」分期</h4>
+                                    <ul class="list-disc list-inside pl-4 text-slate-700 text-lg">
+                                        <li><strong>史前時代：</strong>文字發明前。以口述、圖畫等方式記錄事件。</li>
+                                        <li><strong>歷史時代：</strong>文字發明後。以文字記錄事件，留下較為可信、明確的資料。</li>
+                                    </ul>
+                                </div>
+                                <div class="bg-amber-50 p-4 rounded-xl border border-amber-200">
+                                    <h4 class="font-bold text-amber-900 mb-2">📌 依「朝代更迭」分期</h4>
+                                    <p class="text-slate-700 text-lg pl-2">中國歷史常以朝代作為分期依據，例如：宋、元、明、清。</p>
+                                </div>
+                            </div>
+
+                            <div class="overflow-x-auto rounded-xl shadow-sm border border-orange-200 bg-white">
+                                <table class="knowledge-table w-full text-xl md:text-2xl m-0 border-none">
+                                    <thead class="bg-orange-100 text-orange-900">
+                                        <tr>
+                                            <th class="p-4">紀年方式</th>
+                                            <th class="p-4">使用地區</th>
+                                            <th class="p-4">特色說明</th>
+                                            <th class="p-4">舉例</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-orange-50 text-slate-700 text-lg">
+                                        <tr>
+                                            <td class="font-bold bg-orange-50 text-orange-800 text-center">干支紀年</td>
+                                            <td>古代中國與受其文化影響較深的地區 (日本、朝鮮等)</td>
+                                            <td>① 以天干、地支相互配對，一組為一年<br>② 60年為一個週期 (一甲子)</td>
+                                            <td>甲午年(甲午戰爭)<br>戊戌年(戊戌變法)</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-bold bg-orange-50 text-orange-800 text-center">帝王紀年</td>
+                                            <td>部分君主制國家</td>
+                                            <td>以帝王在位年次，或其使用的年號紀年</td>
+                                            <td>秦始皇26年<br>日本令和元年</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-bold bg-orange-50 text-orange-800 text-center">西元紀年</td>
+                                            <td>① 西方基督宗教國家<br>② 今日國際通用</td>
+                                            <td>① 又稱為公元紀年<br>② 與耶穌誕生有關<br>③ 100年為一世紀</td>
+                                            <td>西元1895年<br>西元19世紀</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-bold bg-orange-50 text-orange-800 text-center">民國紀年</td>
+                                            <td>中華民國</td>
+                                            <td>以中華民國成立(西元1912年)為起始年</td>
+                                            <td>民國113年</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <div class="mt-6 bg-rose-50 p-4 rounded-xl border border-rose-200 shadow-sm">
+                                <h4 class="font-bold text-rose-900 text-xl mb-2 flex items-center"><span class="mr-2">💡</span>提醒筆記：紀年換算</h4>
+                                <p class="text-rose-800 text-lg font-medium">
+                                    ▶️ <strong>民國紀年 + 1911 = 西元紀年</strong> (例: 民國元年 + 1911 = 1912年)<br>
+                                    ▶️ <strong>西元紀年 - 1911 = 民國紀年</strong> (例: 2024 - 1911 = 民國113年)<br>
+                                    ▶️ 天干地支的配對始於「甲子」終於「癸亥」，60年循環一次。
+                                </p>
+                            </div>
+
+                            <!-- 插入圖片區塊 -->
+                            <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <img src="Exam-History-1/p10-1.jpg" alt="天干地支示意圖" class="rounded-xl shadow-sm border border-slate-200 max-w-full h-auto" onerror="this.style.display='none'">
+                                <img src="Exam-History-1/p10-2.jpg" alt="紀年換算示意圖" class="rounded-xl shadow-sm border border-slate-200 max-w-full h-auto" onerror="this.style.display='none'">
+                            </div>
+
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec2', title: '二、臺灣的史前文化 🏺', theme: 'teal',
+                content: `
+                <div class="space-y-8 text-2xl md:text-3xl text-gray-800">
+                    <div class="bg-gradient-to-br from-teal-50 to-emerald-50 p-6 md:p-10 rounded-3xl border-l-8 border-teal-500 shadow-lg">
+                        <div class="text-center font-black text-4xl md:text-5xl text-teal-950 mb-8 border-b-2 border-teal-200 pb-4 flex justify-center items-center gap-4">
+                            <span class="text-5xl">🏺</span> 臺灣的史前文化 <span class="text-5xl">🦴</span>
+                        </div>
+                        <p class="text-xl md:text-2xl text-slate-700 leading-relaxed font-medium mb-6 bg-white p-4 rounded-xl border border-teal-100 shadow-sm">
+                            ▶ 因史前時代缺乏文字，可透過出土的遺跡與器物，了解當時人類生活的情形。<br>
+                            ▶ 根據先民使用器物的材質與製作技術，史前文化可分為：<strong>舊石器、新石器、金屬器時期</strong>。
+                        </p>
+                        
+                        <div class="overflow-x-auto rounded-xl shadow-sm border border-teal-200 bg-white mb-8">
+                            <table class="knowledge-table w-full text-xl md:text-2xl m-0 border-none">
+                                <thead class="bg-teal-100 text-teal-900">
+                                    <tr>
+                                        <th class="p-4 w-1/5">分期</th>
+                                        <th class="p-4 w-1/4">舊石器時代</th>
+                                        <th class="p-4 w-1/4">新石器時代</th>
+                                        <th class="p-4 w-1/4">金屬器時代</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-teal-50 text-slate-700 text-lg">
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">時間</td>
+                                        <td>距今5萬~5千年前</td>
+                                        <td>距今7千~2千年前</td>
+                                        <td>距今2千~4百年前</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">共同特色</td>
+                                        <td>
+                                            ① <strong>打製</strong>石器<br>
+                                            ② <strong>採集、漁獵</strong>維生<br>
+                                            ③ <strong>已知用火</strong>
+                                        </td>
+                                        <td>
+                                            ① <strong>磨製</strong>石器、燒製陶器<br>
+                                            ② 從事<strong>農耕、飼養家畜</strong> (食物取得穩定，文化快速發展)
+                                        </td>
+                                        <td>已知<strong>煉鐵</strong>、使用金屬工具</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">代表文化</td>
+                                        <td class="font-bold text-rose-600">長濱文化</td>
+                                        <td class="font-bold text-emerald-600">
+                                            大坌坑文化 (早期)<br>
+                                            圓山文化 (晚期)<br>
+                                            卑南文化 (晚期)
+                                        </td>
+                                        <td class="font-bold text-amber-600">十三行文化</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">代表地點</td>
+                                        <td>臺東縣 長濱鄉</td>
+                                        <td>
+                                            新北市 八里區 (大坌坑)<br>
+                                            臺北市 中山區 (圓山)<br>
+                                            臺東縣 臺東市 (卑南)
+                                        </td>
+                                        <td>新北市 八里區</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">個別特色</td>
+                                        <td>目前臺灣發現<strong>最早</strong>的史前文化</td>
+                                        <td>
+                                            【大坌坑】繩紋陶器<br>
+                                            【圓山】出土<strong>貝塚</strong><br>
+                                            【卑南】<strong>石板棺</strong>、玉器陪葬
+                                        </td>
+                                        <td>農業為主、漁獵為輔</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-bold bg-teal-50 text-teal-800 text-center">對外交流</td>
+                                        <td class="text-slate-400 text-center">-</td>
+                                        <td>臺灣許多遺址皆出土相似<strong>玉器</strong>，各文化間已有交流互動</td>
+                                        <td>出土來自海外物品，已有<strong>對外貿易</strong> (如：玻璃珠、瑪瑙、中國銅錢)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="bg-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-200">
+                            <h4 class="font-black text-2xl text-indigo-900 mb-2">📚 精熟概念補充：文化層</h4>
+                            <p class="text-xl text-slate-700 leading-relaxed font-medium">
+                                過去人們生活所遺留的器物、生活痕跡，會形成「遺址」。隨著時間推移，不同時期的遺址會在地層中堆積，形成「文化層」。<br>
+                                💡 <strong>文化層的上下堆疊次序可以大致反映時間的變遷，通常愈下方的文化層，其形成的年代愈早。</strong>
+                            </p>
+                        </div>
+                        
+                        <!-- 插入圖片區塊 -->
+                        <div class="mt-6 space-y-4">
+                            <img src="Exam-History-1/p9-1.jpg" alt="舊石器時代示意圖" class="rounded-xl shadow-sm border border-slate-200 max-w-lg mx-auto h-auto" onerror="this.style.display='none'">
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <img src="Exam-History-1/p11-1.jpg" alt="臺灣史前文化架構圖" class="rounded-xl shadow-sm border border-slate-200 w-full h-auto" onerror="this.style.display='none'">
+                                <img src="Exam-History-1/p11-2.jpg" alt="遺址分布地圖" class="rounded-xl shadow-sm border border-slate-200 w-full h-auto" onerror="this.style.display='none'">
+                                <img src="Exam-History-1/p11-3.jpg" alt="文化層示意圖" class="rounded-xl shadow-sm border border-slate-200 w-full h-auto" onerror="this.style.display='none'">
+                            </div>
+                        </div>
+
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec3', title: '三、原住民起源與傳說 🛶', theme: 'emerald',
+                content: `
+                <div class="space-y-8 text-2xl md:text-3xl text-gray-800">
+                    <div class="bg-gradient-to-br from-emerald-50 to-green-50 p-6 md:p-10 rounded-3xl border-l-8 border-emerald-500 shadow-lg">
+                        <div class="text-center font-black text-4xl md:text-5xl text-emerald-950 mb-8 border-b-2 border-emerald-200 pb-4 flex justify-center items-center gap-4">
+                            <span class="text-5xl">🛶</span> 原住民起源與傳說 <span class="text-5xl">🌊</span>
+                        </div>
+                        
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-emerald-100 mb-8">
+                            <h3 class="font-bold text-3xl md:text-4xl text-emerald-800 mb-4 flex items-center"><span class="bg-emerald-200 p-2 rounded-lg mr-3 shadow-sm">1</span> 原住民的起源 🌍</h3>
+                            <p class="text-xl md:text-2xl text-slate-700 leading-relaxed font-medium mb-4">
+                                臺灣原住民的語言和東南亞、大洋洲原住民相近，同屬於「<strong>南島語族</strong>」。<br>
+                                <span class="text-emerald-600 font-bold">💬「我們南島語族憑藉高超的航海技術與知識，活躍在南太平洋、印度洋上！」</span>
+                            </p>
+                            <ul class="list-none space-y-3 text-lg md:text-xl text-slate-700 mb-4">
+                                <li class="bg-emerald-50 p-3 rounded-lg border border-emerald-100">📌 <strong>定義：</strong>語言同屬於南島語系的族群。</li>
+                                <li class="bg-emerald-50 p-3 rounded-lg border border-emerald-100">📌 <strong>遷徙：</strong>臺灣可能是南島語族向外遷徙的起點。</li>
+                                <li class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 text-rose-700 font-bold">
+                                    📌 <strong>分布範圍：</strong><br>
+                                    北起：臺灣<br>
+                                    東達：復活節島<br>
+                                    南抵：紐西蘭<br>
+                                    西到：馬達加斯加
+                                </li>
+                            </ul>
+                            <!-- 插入圖片區塊 -->
+                            <img src="Exam-History-1/p12-1.jpg" alt="南島語族分布範圍圖" class="rounded-xl shadow-sm border border-slate-200 w-full max-w-2xl mx-auto mt-4 h-auto" onerror="this.style.display='none'">
+                        </div>
+
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-emerald-100">
+                            <h3 class="font-bold text-3xl md:text-4xl text-emerald-800 mb-4 flex items-center"><span class="bg-emerald-200 p-2 rounded-lg mr-3 shadow-sm">2</span> 原住民的傳說 🗣️</h3>
+                            <p class="text-xl md:text-2xl text-slate-700 leading-relaxed font-medium mb-4">
+                                早期原住民沒有文字，透過口耳相傳，記錄經歷過的重大事件、傳承文化形成傳說故事。<br>
+                                💡 <strong>意義：</strong>有助於認識原住民起源、遷徙與生活調適的過程，後人藉此推測各族群發展。
+                            </p>
+                            
+                            <div class="space-y-4">
+                                <div class="p-4 bg-amber-50 rounded-xl border border-amber-200">
+                                    <h4 class="font-bold text-amber-900 text-xl mb-2">🥚 起源傳說</h4>
+                                    <p class="text-slate-700 text-lg">描述族人起源、部落形成的過程。例如：部分<strong>泰雅族群</strong>認為祖先是由岩石中誕生，故常將部落中的岩石視為發源聖地。</p>
+                                </div>
+                                <div class="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                                    <h4 class="font-bold text-blue-900 text-xl mb-2">🌊 洪水傳說</h4>
+                                    <p class="text-slate-700 text-lg mb-2">關於洪水氾濫、族人漂流避難的故事。反映出原住民遭遇天災(洪水或海嘯)迫使部落遷徙。</p>
+                                    <ul class="list-disc list-inside pl-2 text-slate-700 text-base">
+                                        <li><strong>阿美族：</strong>兄妹乘石臼漂流至臺灣，結為夫妻繁衍子孫。</li>
+                                        <li><strong>布農族：</strong>巨蛇堵塞溪水，族人退至玉山避難，直到螃蟹剪斷巨蛇退水。</li>
+                                    </ul>
+                                    <div class="flex gap-2 mt-2">
+                                        <img src="Exam-History-1/p12-2.jpg" alt="阿美族洪水傳說" class="rounded-lg shadow-sm border border-slate-200 w-1/2 h-auto" onerror="this.style.display='none'">
+                                        <img src="Exam-History-1/p12-3.jpg" alt="布農族洪水傳說" class="rounded-lg shadow-sm border border-slate-200 w-1/2 h-auto" onerror="this.style.display='none'">
+                                    </div>
+                                </div>
+                                <div class="p-4 bg-rose-50 rounded-xl border border-rose-200">
+                                    <h4 class="font-bold text-rose-900 text-xl mb-2">🦌 遷徙傳說</h4>
+                                    <p class="text-slate-700 text-lg"><strong>邵族的逐鹿傳說：</strong>相傳原居臺南一帶，獵人追逐白鹿來到日月潭，見景色宜人、魚群眾多而定居。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec4', title: '四、名稱演變與分布 📜', theme: 'purple',
+                content: `
+                <div class="space-y-8 text-2xl md:text-3xl text-gray-800">
+                    <div class="bg-gradient-to-br from-purple-50 to-fuchsia-50 p-6 md:p-10 rounded-3xl border-l-8 border-purple-500 shadow-lg">
+                        <div class="text-center font-black text-4xl md:text-5xl text-purple-950 mb-8 border-b-2 border-purple-200 pb-4 flex justify-center items-center gap-4">
+                            <span class="text-5xl">📜</span> 名稱演變與分布 <span class="text-5xl">🗺️</span>
+                        </div>
+                        
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-purple-100 mb-8">
+                            <h3 class="font-bold text-3xl md:text-4xl text-purple-800 mb-4 flex items-center"><span class="bg-purple-200 p-2 rounded-lg mr-3 shadow-sm">1</span> 原住民的名稱演變 🏷️</h3>
+                            <div class="overflow-x-auto rounded-xl shadow-sm border border-purple-200 bg-white">
+                                <table class="knowledge-table w-full text-lg md:text-xl m-0 border-none">
+                                    <thead class="bg-purple-100 text-purple-900">
+                                        <tr>
+                                            <th class="p-3 w-1/4">時期</th>
+                                            <th class="p-3 w-1/4">清帝國時期</th>
+                                            <th class="p-3 w-1/4">日治時期</th>
+                                            <th class="p-3 w-1/4">中華民國時期</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-purple-50 text-slate-700 font-medium">
+                                        <tr>
+                                            <td class="font-bold bg-purple-50 text-purple-800 text-center">分類依據</td>
+                                            <td>是否歸順朝廷<br>(納稅、服勞役)</td>
+                                            <td>居住地區</td>
+                                            <td>居住地區 / 修憲正名</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="font-bold bg-purple-50 text-purple-800 text-center">名稱</td>
+                                            <td>
+                                                ① <strong>熟番</strong> (歸順)<br>
+                                                ② <strong>生番</strong> (未歸順)
+                                            </td>
+                                            <td>
+                                                ① <strong>平埔族</strong><br>
+                                                ② <strong>高砂族</strong>
+                                            </td>
+                                            <td>
+                                                戰後初：平埔族(未被視為原住民)、<strong>山地同胞</strong><br>
+                                                民國83年：統稱「<strong>原住民</strong>」<br>
+                                                民國86年：修憲改稱「<strong>原住民族</strong>」
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-purple-100">
+                            <h3 class="font-bold text-3xl md:text-4xl text-purple-800 mb-4 flex items-center"><span class="bg-purple-200 p-2 rounded-lg mr-3 shadow-sm">2</span> 原住民的分布範圍 🏕️</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-200">
+                                    <h4 class="font-bold text-indigo-900 text-xl mb-2 flex items-center">🏔️ 高山族</h4>
+                                    <ul class="list-disc list-inside text-slate-700 text-lg">
+                                        <li><strong>分布：</strong>山區、東部、蘭嶼</li>
+                                        <li><strong>特徵：</strong>生活區域較難進入，受漢人影響較小，傳統文化保存較完整 (漢化程度較低)。</li>
+                                        <li><strong>舉例：</strong>阿美族(東部大宗)、泰雅族(北部多)、排灣族、布農族、達悟族等(目前中央認定16族)。</li>
+                                    </ul>
+                                </div>
+                                <div class="bg-pink-50 p-4 rounded-xl border border-pink-200">
+                                    <h4 class="font-bold text-pink-900 text-xl mb-2 flex items-center">🌾 平埔族</h4>
+                                    <ul class="list-disc list-inside text-slate-700 text-lg">
+                                        <li><strong>分布：</strong>西部與東北部平原、丘陵</li>
+                                        <li><strong>特徵：</strong>生活區域與漢人較近，受漢化影響深，傳統文化流失快 (漢化程度較高)。</li>
+                                        <li><strong>舉例：</strong>凱達格蘭、噶瑪蘭、道卡斯、西拉雅等。</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-rose-50 p-4 rounded-xl border border-rose-200 text-lg text-rose-800 font-bold shadow-sm mb-4">
+                                💡 提醒筆記：除了被漢化外，平埔族也會受到高山族的同化，使文化保存更不易。
+                            </div>
+
+                            <!-- 插入圖片區塊 -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                                <img src="Exam-History-1/p13-1.jpg" alt="17世紀平埔族分布圖" class="rounded-xl shadow-sm border border-slate-200 w-full h-auto" onerror="this.style.display='none'">
+                                <img src="Exam-History-1/p13-2.jpg" alt="中央政府認定16族分布圖" class="rounded-xl shadow-sm border border-slate-200 w-full h-auto" onerror="this.style.display='none'">
+                            </div>
+
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec5', title: '五、關鍵圖表比一比 📊', theme: 'pink',
+                content: `
+                <div class="space-y-8 text-2xl md:text-3xl text-gray-800">
+                    <div class="bg-gradient-to-br from-pink-50 to-rose-50 p-6 md:p-10 rounded-3xl border-l-8 border-pink-500 shadow-lg">
+                        <div class="text-center font-black text-4xl md:text-5xl text-pink-950 mb-8 border-b-2 border-pink-200 pb-4 flex justify-center items-center gap-4">
+                            <span class="text-5xl">📊</span> 關鍵圖表總複習 <span class="text-5xl">🧠</span>
+                        </div>
+                        
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-pink-100 mb-8">
+                            <h3 class="font-bold text-2xl md:text-3xl text-pink-800 mb-4 bg-pink-100 inline-block px-4 py-2 rounded-xl">1. 歷史事實 vs 歷史解釋</h3>
+                            <table class="w-full text-left text-lg md:text-xl border-collapse border border-pink-200">
+                                <thead>
+                                    <tr class="bg-pink-50 text-pink-900">
+                                        <th class="p-3 border border-pink-200">比較</th>
+                                        <th class="p-3 border border-pink-200">歷史事實</th>
+                                        <th class="p-3 border border-pink-200">歷史解釋</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-slate-700">
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">定義</td>
+                                        <td class="p-3 border border-pink-200">過去確實發生過的事件</td>
+                                        <td class="p-3 border border-pink-200">後人對歷史事實的詮釋、評論</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">說明</td>
+                                        <td class="p-3 border border-pink-200 text-emerald-700 font-bold">較客觀 (不因時間或價值觀改變)</td>
+                                        <td class="p-3 border border-pink-200 text-rose-700 font-bold">較主觀 (容易因不同立場產生差異)</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-pink-100 mb-8">
+                            <h3 class="font-bold text-2xl md:text-3xl text-pink-800 mb-4 bg-pink-100 inline-block px-4 py-2 rounded-xl">2. 臺灣的史前文化與代表</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-base md:text-lg">
+                                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl">
+                                    <div class="font-black text-slate-800 text-xl mb-2 border-b border-slate-300 pb-2">長濱文化</div>
+                                    <div class="text-slate-600 mb-1"><strong>時期：</strong>舊石器</div>
+                                    <div class="text-slate-600 mb-1"><strong>位置：</strong>臺東長濱</div>
+                                    <div class="text-rose-600 font-bold">● 打製石器、已知用火<br>● 臺灣最早</div>
+                                </div>
+                                <div class="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                                    <div class="font-black text-emerald-800 text-xl mb-2 border-b border-emerald-300 pb-2">大坌坑文化</div>
+                                    <div class="text-emerald-700 mb-1"><strong>時期：</strong>新石器(早)</div>
+                                    <div class="text-emerald-700 mb-1"><strong>位置：</strong>新北八里</div>
+                                    <div class="text-rose-600 font-bold">● 繩紋陶器</div>
+                                </div>
+                                <div class="bg-emerald-50 border border-emerald-200 p-4 rounded-xl">
+                                    <div class="font-black text-emerald-800 text-xl mb-2 border-b border-emerald-300 pb-2">圓山 / 卑南文化</div>
+                                    <div class="text-emerald-700 mb-1"><strong>時期：</strong>新石器(晚)</div>
+                                    <div class="text-emerald-700 mb-1"><strong>位置：</strong>臺北中山/臺東市</div>
+                                    <div class="text-rose-600 font-bold">● 圓山：貝塚<br>● 卑南：石板棺、玉器</div>
+                                </div>
+                                <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl">
+                                    <div class="font-black text-amber-800 text-xl mb-2 border-b border-amber-300 pb-2">十三行文化</div>
+                                    <div class="text-amber-700 mb-1"><strong>時期：</strong>金屬器</div>
+                                    <div class="text-amber-700 mb-1"><strong>位置：</strong>新北八里</div>
+                                    <div class="text-rose-600 font-bold">● 製作鐵器<br>● 對外貿易(玻璃珠)</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-6 rounded-2xl shadow-sm border border-pink-100">
+                            <h3 class="font-bold text-2xl md:text-3xl text-pink-800 mb-4 bg-pink-100 inline-block px-4 py-2 rounded-xl">3. 原住民比較</h3>
+                            <table class="w-full text-left text-lg md:text-xl border-collapse border border-pink-200">
+                                <thead>
+                                    <tr class="bg-pink-50 text-pink-900">
+                                        <th class="p-3 border border-pink-200">族群</th>
+                                        <th class="p-3 border border-pink-200">平埔族</th>
+                                        <th class="p-3 border border-pink-200">高山族</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-slate-700">
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">起源</td>
+                                        <td class="p-3 border border-pink-200 text-center" colspan="2">南島語族</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">分布</td>
+                                        <td class="p-3 border border-pink-200">西部與東北部平原、丘陵</td>
+                                        <td class="p-3 border border-pink-200">山區、東部、蘭嶼</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">文化</td>
+                                        <td class="p-3 border border-pink-200 text-rose-600 font-bold">漢化較深</td>
+                                        <td class="p-3 border border-pink-200 text-emerald-600 font-bold">漢化較淺</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">清代</td>
+                                        <td class="p-3 border border-pink-200">熟番 (已歸順政府)</td>
+                                        <td class="p-3 border border-pink-200">生番 (未歸順政府)</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">日治</td>
+                                        <td class="p-3 border border-pink-200">平埔族</td>
+                                        <td class="p-3 border border-pink-200">高砂族</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="p-3 border border-pink-200 font-bold bg-pink-50/50">戰後</td>
+                                        <td class="p-3 border border-pink-200">未被視為原住民</td>
+                                        <td class="p-3 border border-pink-200">山地同胞</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="mt-4 text-center text-lg text-rose-800 font-bold bg-rose-50 p-2 rounded-lg">
+                                民國83年統稱「原住民」；民國86年修憲改稱「原住民族」
+                            </div>
+                        </div>
+
+                    </div>
+                </div>`
+            }
+        ];
+
+        const generate60Questions = () => {
+            const qList = [];
+            const addQ = (q, opts, ans, exps, generalExp = "") => qList.push({ q, opts, ans, exps, generalExp, showExplanation: false, selectedAns: null, isCorrect: false });
+            
+            // ==========================================
+            //  魔王級題庫 - 共 60 題 (史前文化與原住民)
+            // ==========================================
+
+            // [歷史事實 vs 解釋] (1-6)
+            addQ("下列關於歷史的敘述，何者屬於「歷史事實」的範疇？", ["甲午戰爭對臺灣的發展帶來深遠的影響", "清帝國於西元1895年將臺灣割讓給日本", "日本統治臺灣是一段充滿血淚的殖民歷史", "臺灣在日本帶領下進入了現代化社會"], 1, ["錯誤。此為後人對戰爭影響的「評價」，屬歷史解釋。", "正確。「1895年割讓臺灣」是確切發生過、不可改變的事件，屬歷史事實。", "錯誤。「充滿血淚」帶有強烈的主觀情感與價值判斷，屬歷史解釋。", "錯誤。「進入現代化」為後人對於這段統治時期的發展定調與詮釋，屬歷史解釋。"]);
+            addQ("小明在報告中寫道：「西元1624年，荷蘭人來到臺灣南部，這是臺灣歷史上的一大悲劇。」這句話中包含了什麼歷史概念？", ["僅有歷史事實", "僅有歷史解釋", "前半句為歷史解釋，後半句為歷史事實", "前半句為歷史事實，後半句為歷史解釋"], 3, ["錯誤。句中包含了主觀評價。", "錯誤。句中也包含了客觀發生的事件。", "錯誤。位置顛倒。", "正確。「1624年荷蘭人來臺」是客觀的歷史事實；「這是一大悲劇」則是小明主觀的歷史解釋。"]);
+            addQ("考古學家在遺址中發掘出「刻有文字的石碑」，這塊石碑在歷史研究的分類中，最精確的定位是什麼？", ["歷史解釋", "歷史紀錄", "神話傳說", "口述歷史"], 1, ["錯誤。解釋是後人的主觀評論。", "正確。以遺物、遺址或「文字」等方式保存歷史事實的載體，稱為歷史紀錄。", "錯誤。石碑文字屬於實質紀錄，非純粹神話。", "錯誤。口述歷史是指沒有文字，僅靠口耳相傳的歷史。"]);
+            addQ("「同一件歷史事實，往往會有不同的歷史解釋。」下列哪一組說法最能印證此觀點？", ["甲：鄭成功擊敗荷蘭人；乙：荷蘭人離開臺灣", "甲：牡丹社事件發生於1874年；乙：牡丹社事件起因於琉球漂民被殺", "甲：日本殖民帶來了壓迫與剝削；乙：日本統治奠定臺灣現代化基礎", "甲：臺灣原住民屬於南島語族；乙：南島語族分布極廣"], 2, ["錯誤。兩者皆為對同一事件的客觀事實描述。", "錯誤。兩者皆為歷史事實（時間與起因）。", "正確。兩者針對同一個歷史事實（日本統治臺灣），基於不同立場與價值觀，給出了完全相反的主觀「解釋」。", "錯誤。兩者皆為客觀事實。"]);
+            addQ("某本歷史書籍提到：「秦始皇統一六國，結束了長期的戰亂，但也實施了嚴酷的統治。」這段文字的敘述性質為何？", ["完全是客觀的歷史事實", "完全是主觀的歷史解釋", "包含歷史事實與歷史解釋", "無法分辨其性質"], 2, ["錯誤。句中有「嚴酷」等主觀評價。", "錯誤。句中有「統一六國」等客觀事實。", "正確。「統一六國、結束戰亂」為發生的歷史事實；而「嚴酷的統治」則帶有後人評價的歷史解釋。", "錯誤。可以明確區分。"]);
+            addQ("我們之所以要區分「歷史事實」與「歷史解釋」，最重要的目的是什麼？", ["為了背誦更精確的年代", "為了培養批判思考，不盲從單一觀點", "為了證明古人的文字紀錄都是捏造的", "為了統一所有人對歷史的看法"], 1, ["錯誤。區分兩者與背誦年代無關。", "正確。了解歷史解釋的主觀性，能幫助我們在面對不同史料時，具備判斷與批判的能力，避免被單一立場誤導。", "錯誤。文字紀錄並非全為捏造。", "錯誤。歷史解釋本就允許多元看法，無法也不應統一。"]);
+
+            // [歷史分期與紀年] (7-12)
+            addQ("人類歷史發展中，「史前時代」與「歷史時代」的分界標誌是什麼？", ["農業的出現", "陶器的燒製", "文字的發明", "金屬器的使用"], 2, ["錯誤。農業出現是新石器時代的特徵，仍在史前時代內。", "錯誤。陶器燒製也是新石器時代特徵。", "正確。人類發明並使用「文字」來記錄事件，是進入歷史時代的明確分界點。", "錯誤。金屬器使用並非時代分界的唯一絕對標準(有些金屬器時代仍無文字)。"]);
+            addQ("古代中國常以「唐、宋、元、明、清」來劃分歷史，這種分期方式的依據為何？", ["文化演進", "文字有無", "宗教信仰", "朝代更迭"], 3, ["錯誤。並非單純以文化演進劃分。", "錯誤。這些朝代皆處於歷史時代(有文字)。", "錯誤。非宗教信仰。", "正確。中國歷史最常以政權的替換（朝代更迭）作為劃分不同時期的標準。"]);
+            addQ("下列關於「干支紀年」的敘述，何者正確？", ["以100年為一個循環週期", "由十地支與十二天干配對而成", "甲午戰爭的「甲午」即為干支紀年", "今日國際上最通用的紀年方式"], 2, ["錯誤。干支紀年是以60年為一個週期（一甲子）。", "錯誤。是由「十天干」與「十二地支」配對。", "正確。甲午、戊戌等名稱皆來自於天干與地支的組合配對，是古代中國常用的紀年法。", "錯誤。今日國際通用為西元紀年。"]);
+            addQ("小華在阿公的舊照片背後看到寫著「拍攝於民國50年」，若要換算為西元紀年，這張照片拍攝於西元哪一年？", ["西元1950年", "西元1960年", "西元1961年", "西元1971年"], 2, ["錯誤。未加上1911。", "錯誤。計算錯誤。", "正確。換算公式為：民國紀年 + 1911 = 西元紀年。50 + 1911 = 1961年。", "錯誤。加錯數字。"]);
+            addQ("日本的「令和元年」、中國的「康熙10年」，這類紀年方式統稱為什麼？", ["干支紀年", "帝王紀年", "西元紀年", "神話紀年"], 1, ["錯誤。干支為甲子、乙丑等。", "正確。以君主任期或其制定的年號來計算年份，稱為帝王紀年，常見於部分君主制國家。", "錯誤。西元與耶穌誕生有關。", "錯誤。並無神話紀年此專有名詞。"]);
+            addQ("西元紀年的起始（西元元年）是依據什麼事件來訂定的？", ["羅馬帝國建國", "耶穌誕生", "四大古文明出現", "工業革命開始"], 1, ["錯誤。非羅馬帝國建國。", "正確。傳統上西方基督宗教國家以耶穌誕生之年作為西元元年（西元前稱為B.C.，西元後稱為A.D.）。", "錯誤。古文明出現遠早於西元元年。", "錯誤。工業革命發生於18世紀。"]);
+
+            // [史前文化 - 舊石器] (13-18)
+            addQ("臺灣目前已知發現最早的史前文化遺址是哪一個？", ["大坌坑文化", "長濱文化", "圓山文化", "卑南文化"], 1, ["錯誤。大坌坑為新石器時代早期。", "正確。位於臺東的長濱文化，距今約5萬至5千年前，屬舊石器時代，是臺灣目前已知最早的史前文化。", "錯誤。圓山為新石器時代晚期。", "錯誤。卑南為新石器時代晚期。"]);
+            addQ("長濱文化的先民在生活方式上，具備了下列哪一項特徵？", ["已知燒製繩紋陶器", "懂得飼養家畜", "已知用火並使用打製石器", "能從事簡單的農耕"], 2, ["錯誤。陶器為新石器時代特徵。", "錯誤。飼養家畜為新石器時代特徵。", "正確。舊石器時代的長濱文化，先民已知用火，並以敲打方式製作粗糙的打製石器。", "錯誤。農耕為新石器時代特徵。"]);
+            addQ("考古學家在臺東縣長濱鄉的八仙洞內發現了史前遺跡，推測當時居民過著採集、漁獵的生活。請問這最可能是哪一個時代的遺址？", ["舊石器時代", "新石器時代早期", "新石器時代晚期", "金屬器時代"], 0, ["正確。八仙洞遺址為長濱文化的代表，屬於舊石器時代，無農業，依賴大自然賜予（採集漁獵）。", "錯誤。新石器已有農業。", "錯誤。新石器晚期農業更發達。", "錯誤。金屬器時代社會更複雜。"]);
+            addQ("比較「舊石器時代」與「新石器時代」，人類生活發生巨大改變的關鍵轉捩點是什麼？", ["開始使用火", "懂得打製石器", "出現農耕與畜牧", "發明了文字"], 2, ["錯誤。舊石器時代就已經會用火。", "錯誤。打製石器是舊石器時代的特徵。", "正確。新石器時代因為「農業與畜牧」的出現，使人類食物來源穩定，從此不需頻繁遷徙，文化得以快速發展，被稱為新石器革命。", "錯誤。發明文字即進入歷史時代。"]);
+            addQ("若小明想利用週末去參觀臺灣「舊石器時代」的代表性遺址，他應該買車票前往哪一個縣市？", ["臺北市", "新北市", "臺中市", "臺東縣"], 3, ["錯誤。臺北市有圓山文化(新石器)。", "錯誤。新北市有大坌坑、十三行文化。", "錯誤。臺中市有牛罵頭等文化。", "正確。代表舊石器時代的「長濱文化」遺址(八仙洞)位於臺東縣。"]);
+            addQ("關於「長濱文化」的敘述，下列何者推論最為合理？", ["他們可能會種植稻米來度過寒冬", "他們居住在鋼筋水泥建築中", "他們可能在洞穴中生火烤肉取暖", "他們會製作精美的玉器當作陪葬品"], 2, ["錯誤。舊石器時代無農耕。", "錯誤。當時不懂蓋複雜房屋，多利用天然洞穴。", "正確。長濱文化已知用火且以採集漁獵為主，故在天然洞穴中生火烤獵物是合理的推論。", "錯誤。製作玉器為新石器時代晚期(如卑南文化)的特徵。"]);
+
+            // [史前文化 - 新石器] (19-25)
+            addQ("大坌坑文化是臺灣新石器時代早期的代表，其最具標誌性的出土器物是什麼？", ["打製石器", "繩紋陶器", "玻璃珠", "中國銅錢"], 1, ["錯誤。打製石器為舊石器時代主要特徵。", "正確。大坌坑文化的陶器表面常帶有粗繩紋的裝飾，因此「繩紋陶器」為其重要特徵。", "錯誤。玻璃珠為金屬器時代(十三行)出土物。", "錯誤。中國銅錢為十三行文化貿易證據。"]);
+            addQ("考古學家在臺北盆地發掘出一處史前遺址，發現了大量的「貝塚」。這最可能是下列哪一個文化的特徵？", ["長濱文化", "大坌坑文化", "圓山文化", "卑南文化"], 2, ["錯誤。長濱文化在臺東。", "錯誤。大坌坑的代表性特徵為繩紋陶。", "正確。位於臺北市中山區的圓山文化，以先民食用貝類後丟棄堆積而成的「貝塚」聞名。", "錯誤。卑南文化在臺東，特色為石板棺。"]);
+            addQ("卑南文化屬於新石器時代晚期，下列哪一項是該文化最著名的考古發現？", ["煉鐵作坊", "繩紋陶罐", "大量的貝塚", "石板棺與精美玉器"], 3, ["錯誤。煉鐵為十三行文化特徵。", "錯誤。繩紋陶為大坌坑文化特徵。", "錯誤。貝塚為圓山文化特徵。", "正確。位於臺東的卑南文化遺址，出土了數量龐大的石板棺群，以及作為陪葬品的精美玉器，顯示當時已有豐富的喪葬文化與階級雛形。"]);
+            addQ("在臺灣許多不同的新石器時代遺址中，都曾出土過造型相似的「玉器」。這一現象最能說明什麼歷史推論？", ["當時全臺灣統一由一個政權統治", "玉器是當時唯一流通的貨幣", "各史前文化之間已經存在交流與互動", "玉器是外國商人引進臺灣的"], 2, ["錯誤。史前時代尚無統一政權的概念。", "錯誤。無法證明玉器是唯一貨幣。", "正確。不同地區出土相似材質與工法的玉器（如花蓮豐田玉），推測各部落或文化間已有跨區域的交換與互動網絡。", "錯誤。金屬器時代才較有明顯的外海貿易證據。"]);
+            addQ("新石器時代的人們相較於舊石器時代，在工具的製作上有何重大突破？", ["開始使用鐵器", "將石器表面磨平變鋒利", "發明了青銅器", "只使用木製工具"], 1, ["錯誤。鐵器屬於金屬器時代。", "正確。新石器時代的特徵之一就是使用「磨製石器」，將敲打後的石器加以磨光，使其更鋒利耐用。", "錯誤。臺灣史前無明顯的青銅時代，直接進入鐵器(金屬器)時代。", "錯誤。他們廣泛使用磨製石器。"]);
+            addQ("關於臺灣「新石器時代」的整體特徵，下列敘述何者錯誤？", ["人們已經懂得燒製陶器", "人們開始定居並從事農耕", "食物來源比舊石器時代更不穩定", "大坌坑、圓山、卑南皆為代表文化"], 2, ["正確敘述。陶器為新石器指標。", "正確敘述。農耕促使定居。", "錯誤。因為出現了農耕與飼養家畜，食物取得變得「更穩定」，從而促進了文化的快速發展。", "正確敘述。皆為新石器代表。"]);
+            addQ("小華整理了臺灣史前文化的筆記：「甲文化：打製石器；乙文化：繩紋陶器；丙文化：石板棺」。請問甲、乙、丙依序代表哪些文化？", ["長濱、大坌坑、卑南", "十三行、圓山、卑南", "大坌坑、長濱、圓山", "長濱、圓山、十三行"], 0, ["正確。甲(舊石器/長濱)，乙(新石器早期/大坌坑)，丙(新石器晚期/卑南)。", "錯誤。十三行有鐵器。", "錯誤。順序不對。", "錯誤。圓山特色為貝塚，十三行為鐵器。"]);
+
+            // [史前文化 - 金屬器] (26-30)
+            addQ("十三行文化是臺灣目前已知最具代表性的金屬器時代遺址，其最大的特色為何？", ["出土全臺最大的石板棺群", "發明了世界上最早的文字", "已知煉鐵，並使用金屬工具", "以採集漁獵為唯一的生存方式"], 2, ["錯誤。石板棺是卑南文化的特色。", "錯誤。十三行文化仍屬史前時代，無文字發明。", "正確。十三行遺址出土了煉鐵作坊的遺跡（如鐵渣），證明當時先民已掌握煉鐵技術。", "錯誤。他們也有農業，且會進行貿易。"]);
+            addQ("考古學家在十三行遺址發掘出瑪瑙、玻璃珠及中國銅錢等非臺灣本土產製的物品。這項發現反映出十三行文化具備什麼特徵？", ["擁有極高的玉器雕刻技術", "已經與海外地區有貿易交流", "受到中國朝代的直接統治", "是南島語族的唯一發源地"], 1, ["錯誤。玉器以卑南文化較著名。", "正確。這些外來物品證明十三行文化的先民懂得航海，並與臺灣島外的其他人群進行物品交換與跨海貿易。", "錯誤。僅有貿易往來，並無被直接統治的歷史紀錄。", "錯誤。無法從這些物品推論為發源地。"]);
+            addQ("下列哪一個史前文化遺址的位置，與十三行文化同樣位於今日的「新北市八里區」？", ["長濱文化", "大坌坑文化", "圓山文化", "卑南文化"], 1, ["錯誤。臺東縣長濱鄉。", "正確。大坌坑文化與十三行文化的遺址皆位於新北市八里區附近（但年代所屬文化層不同）。", "錯誤。臺北市中山區。", "錯誤。臺東縣臺東市。"]);
+            addQ("依據臺灣史前文化的演進順序，下列何者排列正確？", ["大坌坑文化 → 長濱文化 → 十三行文化", "十三行文化 → 圓山文化 → 長濱文化", "長濱文化 → 卑南文化 → 十三行文化", "卑南文化 → 大坌坑文化 → 圓山文化"], 2, ["錯誤。長濱(舊)早於大坌坑(新)。", "錯誤。十三行為最晚的金屬器時代。", "正確。長濱(舊石器) → 卑南(新石器晚期) → 十三行(金屬器)，符合年代先後順序。", "錯誤。大坌坑為早期，應在卑南之前。"]);
+            addQ("關於金屬器時代先民的生活方式，下列推論何者最不合理？", ["他們可能使用鐵製農具來增加農作物產量", "他們可能配戴海外交易來的玻璃珠當裝飾", "他們可能完全放棄了打獵和捕魚", "他們可能居住在靠近水域或河口的地方以利貿易"], 2, ["合理。有了鐵器技術可製作更耐用的農具。", "合理。十三行遺址確有出土外來玻璃珠。", "錯誤。即使進入金屬器時代有了農業，先民仍會輔以採集、漁獵來補充食物來源，並未完全放棄。", "合理。八里靠近淡水河口，便於出海與外地交流。"]);
+
+            // [史前綜合與文化層] (31-36)
+            addQ("「文化層」是考古學上判斷遺址年代先後的重要依據。一般而言，在沒有發生地層翻轉的情況下，愈下方的文化層代表什麼意義？", ["形成的年代愈晚（愈現代）", "形成的年代愈早（愈古老）", "該文化的發展程度愈高", "居住在該層的人口數愈多"], 1, ["錯誤。上方才是較晚形成的。", "正確。根據地層疊加原理，先定居的人留下的遺跡在下方，後來的人在上方繼續覆蓋，故愈下層年代愈古老。", "錯誤。不代表發展程度高。", "錯誤。無法直接判斷人口數。"]);
+            addQ("如果在同一個發掘坑中，由上而下依序挖出了「鐵渣」、「貝塚與磨製石斧」、「粗糙的打製石器」。這三層分別最可能對應臺灣的哪些史前時代？", ["金屬器、新石器、舊石器", "舊石器、新石器、金屬器", "新石器、金屬器、舊石器", "金屬器、舊石器、新石器"], 0, ["正確。最上層年代最晚(鐵渣=金屬器)；中層(貝塚/磨製石器=新石器)；最下層年代最早(打製石器=舊石器)。", "錯誤。順序反了。", "錯誤。順序不對。", "錯誤。舊石器應在最底層。"]);
+            addQ("根據教材中的「臺灣史前文化時間與空間架構圖」，下列哪一個文化存在的時間最為久遠且漫長？", ["圓山文化", "卑南文化", "十三行文化", "長濱文化"], 3, ["錯誤。圓山屬新石器晚期。", "錯誤。卑南屬新石器晚期。", "錯誤。十三行為距今2千~4百年前。", "正確。長濱文化距今約5萬至5千年前，時間跨度最大且年代最久遠。"]);
+            addQ("下列哪一組史前文化的配對，皆分布於臺灣的「東部地區」？", ["圓山文化、大坌坑文化", "長濱文化、卑南文化", "十三行文化、圓山文化", "大坌坑文化、卑南文化"], 1, ["錯誤。皆在北部。", "正確。長濱文化(臺東長濱鄉)與卑南文化(臺東市)皆位於臺灣東部。", "錯誤。皆在北部。", "錯誤。大坌坑在北部。"]);
+            addQ("史前文化從「舊石器時代」進步到「新石器時代」，其生活型態的轉變可用下列哪一句話形容最適切？", ["從跨海貿易到閉關自守", "從依賴自然餽贈到主動生產食物", "從金屬農具回退到石製農具", "從定居聚落轉變為游牧生活"], 1, ["錯誤。無閉關自守的轉變。", "正確。舊石器依賴採集漁獵(自然餽贈)，新石器開始農耕畜牧(主動生產)，食物來源趨於穩定。", "錯誤。順序相反且新石器無金屬農具。", "錯誤。是因為農業出現才從遷徙轉為「定居」。"]);
+            addQ("關於臺灣史前時代的結束與歷史時代的開端，下列哪一個事件是分水嶺？", ["漢人大量移居臺灣開墾", "歐洲人(如荷蘭人)陸續來到東亞並留下文字紀錄", "十三行文化的煉鐵技術失傳", "原住民開始使用鐵器"], 1, ["錯誤。漢人大量移墾較晚(約明鄭清代後)。", "正確。16世紀起歐洲人來到東亞(大航海時代)，荷蘭人等外部勢力來臺後留下了「文字紀錄」，使臺灣正式進入歷史時代。", "錯誤。技術失傳非時代分界。", "錯誤。使用鐵器仍屬史前時代(無文字)。"]);
+
+            // [南島語族起源分布] (37-42)
+            addQ("臺灣原住民在語言與血緣分類上，被歸類為下列哪一個語族？", ["漢藏語族", "印歐語族", "阿爾泰語族", "南島語族"], 3, ["錯誤。漢族多屬此語族。", "錯誤。歐美多屬此語族。", "錯誤。亞洲北方民族多屬此語族。", "正確。臺灣原住民的語言和東南亞、大洋洲原住民相近，同屬於南島語族。"]);
+            addQ("南島語族的分布範圍極廣，被譽為航海的民族。請問其分布範圍的最北端是哪裡？", ["日本", "臺灣", "夏威夷", "菲律賓"], 1, ["錯誤。日本不在南島語族主要分布區內。", "正確。南島語族分布的最北端即為「臺灣」，甚至有學說認為臺灣是南島語族向外遷徙的起點。", "錯誤。夏威夷屬分布範圍內，但非最北。", "錯誤。菲律賓在其範圍內，非最北。"]);
+            addQ("承上題，南島語族分布範圍的最東、最南、最西端，依序分別是下列哪一組地點？", ["復活節島、紐西蘭、馬達加斯加", "夏威夷、澳洲、印度", "復活節島、澳洲、馬達加斯加", "夏威夷、紐西蘭、印度"], 0, ["正確。東達復活節島，南抵紐西蘭，西到馬達加斯加。這是一道經典的地理位置配對題。", "錯誤。澳洲原住民非南島語族(或僅少部分關聯)，西非印度。", "錯誤。澳洲非最南代表。", "錯誤。東端為復活節島較遠。"]);
+            addQ("許多語言學與考古學研究指出，「臺灣」在南島語族發展史上占有極為重要的地位，其主要原因為何？", ["臺灣是南島語族唯一擁有文字的地區", "臺灣可能是南島語族向外遷徙的起點", "臺灣的原住民完全沒有受到外來文化影響", "臺灣是南島語族領土面積最大的島嶼"], 1, ["錯誤。早期原住民皆無文字。", "正確。臺灣原住民族的語言多樣性極高，許多學者推測臺灣是南島語族的發源地或遷徙的起始點。", "錯誤。受過許多外來政權影響。", "錯誤。紐西蘭、馬達加斯加等島嶼皆大於臺灣。"]);
+            addQ("若你要向外國朋友介紹臺灣原住民族的特徵，下列哪一句話最符合史實？", ["他們是乘著火車從中國大陸遷徙過來的", "他們的語言與大洋洲、東南亞的島嶼住民有親緣關係", "他們自古以來就使用漢字作為溝通工具", "他們在冰河時期從日本列島徒步走來"], 1, ["錯誤。非乘火車且非直接由近代中國遷徙。", "正確。同屬南島語族，語言相近且擁有高超的航海技術。", "錯誤。早期無文字。", "錯誤。南島語族主要是海洋民族。"]);
+            addQ("在南島語族的分布地圖中，哪一個大洋「不屬於」他們活躍的主要範圍？", ["太平洋", "印度洋", "大西洋", "以上皆是其活躍範圍"], 2, ["錯誤。南太平洋是其主要活動範圍。", "錯誤。印度洋(至馬達加斯加)也是其活動範圍。", "正確。南島語族的分布往西最遠到馬達加斯加(屬印度洋)，並未進入大西洋範圍。", "錯誤。大西洋不在範圍內。"]);
+
+            // [原住民傳說] (43-48)
+            addQ("早期原住民因為沒有文字，他們是透過何種方式來記錄經歷過的重大事件與傳承文化？", ["雕刻在玉器上", "用打製石器記錄", "口耳相傳形成傳說故事", "撰寫在竹簡上"], 2, ["錯誤。玉器無刻文字。", "錯誤。石器無記錄功能。", "正確。在沒有文字的史前時代，口述歷史與「口耳相傳」的神話傳說是保存族群記憶最重要的途徑。", "錯誤。竹簡為古代中國記錄方式，原住民未使用。"]);
+            addQ("部分泰雅族群流傳著「祖先是由岩石中誕生，劈開巨石走出來」的故事。這種類型的傳說屬於下列何者？", ["洪水傳說", "起源傳說", "遷徙傳說", "矮人傳說"], 1, ["錯誤。與水無關。", "正確。描述族人起源、祖先如何誕生、部落如何形成的過程，屬於「起源傳說」。", "錯誤。非描述搬家過程。", "錯誤。非矮黑人傳說。"]);
+            addQ("阿美族流傳著「兄妹乘著石臼漂流至臺灣，結為夫妻繁衍子孫」的故事；布農族則有「巨蛇堵塞溪水，退至玉山避難」的故事。這兩者共通的主題是什麼？", ["祈求豐收", "太陽神射日", "洪水氾濫與避難", "追逐白鹿"], 2, ["錯誤。與豐收無關。", "錯誤。射日為另一種常見傳說。", "正確。兩者皆描述了族人遭遇極大水患(洪水或海嘯)後，漂流或逃往高處避難的情節，屬於「洪水傳說」。", "錯誤。逐鹿是邵族傳說。"]);
+            addQ("原住民的「洪水傳說」在歷史研究上具有何種意義？", ["證明了史前時代氣候永遠晴朗", "反映出原住民曾遭遇嚴重天災，並因此迫使部落遷徙", "證實了外星人曾經造訪臺灣", "表示原住民的祖先皆是漁夫"], 1, ["錯誤。反而證明了有天災。", "正確。神話往往蘊含真實的環境記憶，洪水傳說反映了先民在臺灣(或來臺前)曾面臨重大水患考驗，必須遷居高山或他處的歷史適應過程。", "錯誤。無關外星人。", "錯誤。與漁夫職業無必然關聯。"]);
+            addQ("相傳某族群的原住民原本住在今日臺南一帶，因為獵人追逐一隻「白鹿」來到了日月潭，發現當地景色宜人且魚群眾多，便決定定居下來。這是臺灣哪一個族群著名的「遷徙傳說」？", ["達悟族", "阿美族", "邵族", "賽夏族"], 2, ["錯誤。達悟族在蘭嶼。", "錯誤。阿美族主要在東部。", "正確。逐鹿傳說是「邵族」非常著名的故事，解釋了他們為何從平地遷徙至南投日月潭周邊定居的歷史。", "錯誤。賽夏族以矮靈祭聞名。"]);
+            addQ("對於原住民的神話與傳說，現代歷史學者通常抱持何種態度？", ["視為無稽之談，不具任何參考價值", "百分之百當作真實的歷史事件寫入教科書", "認為其中可能蘊含族群起源與生活調適的線索，有助於推測歷史發展", "只當作兒童文學來閱讀"], 2, ["錯誤。不能視為無稽之談。", "錯誤。傳說會誇大，不能百分百當作正史。", "正確。學者會過濾神話中的神奇色彩，萃取出族群遷徙、遭遇天災或社會組織變化的「合理線索」，作為史料的補充。", "錯誤。其具備歷史與人類學的研究價值。"]);
+
+            // [名稱演變與分類] (49-54)
+            addQ("清帝國時期，統治者對臺灣原住民的分類與稱呼主要是「熟番」與「生番」。其分類的依據是什麼？", ["依據分布區域在平地或高山", "依據是否歸順朝廷（納稅、服勞役）", "依據母系社會或父系社會", "依據漢化程度的高低"], 1, ["錯誤。這是日治時期的依據。", "正確。清代以是否「歸化/納稅/服勞役」作為劃分標準，願服從統治者為熟番，未歸化者為生番。", "錯誤。非以親屬制度區分。", "錯誤。漢化深淺是結果，並非官方最初分類的法規依據。"]);
+            addQ("日治時期，日本總督府改變了清代的原住民稱呼，將原住民改分為「平埔族」與「高砂族」。此時期的分類依據轉變為何？", ["依據是否納稅", "依據身高與體型", "依據居住地區（活動範圍）", "依據是否信仰日本神道教"], 2, ["錯誤。這是清代標準。", "錯誤。非外貌特徵。", "正確。日治時期主要依據「居住與活動區域」來重新劃分，平地的稱為平埔族，山區的稱為高砂族。", "錯誤。非宗教信仰。"]);
+            addQ("中華民國政府來臺統治初期，對臺灣原住民的政策與稱呼發生了什麼改變？", ["將所有原住民統稱為高山族", "平埔族未被視為原住民，將其餘原住民稱為「山地同胞」", "恢復清代的熟番與生番稱呼", "立刻推動正名運動，改稱原住民族"], 1, ["錯誤。高山族是民間俗稱，官方稱為山胞。", "正確。戰後初期，政府將山區原住民改稱為「山地同胞(簡稱山胞)」，且平埔族因漢化已深，並未被官方認定為原住民身分。", "錯誤。未恢復清代稱呼。", "錯誤。正名運動是民國80年代後才開始。"]);
+            addQ("臺灣原住民歷經多年的社會運動與爭取，終於在「民國83年」與「民國86年」獲得政府修憲回應。下列關於其名稱演變何者正確？", ["先改稱「原住民族」，再改稱「山地同胞」", "先改稱「原住民」，再改稱「原住民族」", "統一正名為「平埔族」", "廢除所有稱呼，統稱「臺灣人」"], 1, ["錯誤。順序與發展相反。", "正確。民國83年修憲將帶有歧視意味的「山胞」正名為「原住民」；民國86年進一步改為具有集體權概念的「原住民族」。", "錯誤。平埔族只是其中一部分且當時多未獲正名認定。", "錯誤。仍保留了原住民族的專屬身分稱呼。"]);
+            addQ("有一份史料記載：「朝廷認為這些居住在深山中、不受教化且不繳交番餉（稅）的族群難以管理，應劃定界線隔離。」請問史料中所指的族群，在當時最可能被稱為什麼？", ["平埔族", "高砂族", "生番", "山地同胞"], 2, ["錯誤。這是日治時期稱呼。", "錯誤。這是日治時期稱呼。", "正確。「朝廷(清代)」、「不受教化、不繳稅」，符合清代對未歸化原住民「生番」的定義。", "錯誤。這是戰後稱呼。"]);
+            addQ("從「生番/熟番」到「高砂族/平埔族」，再到「山地同胞」，最後正名為「原住民族」。這一段名稱演變的歷史，最能反映出什麼歷史意義？", ["原住民的傳統文化已被完全消滅", "各時代統治者對原住民的管理心態與原住民自我認同的覺醒", "臺灣地形發生了劇烈的變化", "原住民的總人口數不斷減少"], 1, ["錯誤。並未完全消滅。", "正確。早期稱呼多帶有統治者的管理本位或歧視(番、山胞)，後期的「原住民族」則是原住民自我覺醒、爭取尊嚴與主體性的結果。", "錯誤。與地形變化無關。", "錯誤。與人口數增減無直接關聯。"]);
+
+            // [平埔與高山族綜合比較] (55-60)
+            addQ("相較於「高山族」，「平埔族」在歷史發展上面臨了什麼樣的處境？", ["生活區域較難進入，傳統文化保存完整", "因生活區域與漢人較近，受漢化影響深，傳統文化流失較快", "完全沒有受到任何外來政權的統治", "是目前臺灣法定認可族群數最多的一支"], 1, ["錯誤。這是高山族的特徵。", "正確。平埔族分布於西部平原丘陵，最早接觸漢人移民，因此通婚、文化同化(漢化)程度最高，導致語言與習俗較難保留。", "錯誤。受清代、日治等統治。", "錯誤。目前中央認定16族多為高山族體系，平埔族僅部分(如噶瑪蘭)獲認定。"]);
+            addQ("下列哪一組原住民族群，在傳統分類上皆屬於「平埔族」？", ["阿美族、泰雅族", "凱達格蘭族、西拉雅族", "布農族、排灣族", "達悟族、噶瑪蘭族"], 1, ["錯誤。皆為高山族。", "正確。凱達格蘭族(北部)、西拉雅族(南部)皆居住於平地，為平埔族代表。", "錯誤。皆為高山族。", "錯誤。達悟族為高山族(離島)，噶瑪蘭為平埔族。"]);
+            addQ("根據中央政府認定的16族分布圖，臺灣「東部地區」(如花蓮、臺東)人口最為大宗的原住民族群是哪一族？", ["泰雅族", "邵族", "阿美族", "賽夏族"], 2, ["錯誤。泰雅族多分布於北部及中部山區。", "錯誤。邵族在南投日月潭。", "正確。阿美族主要分布於花東縱谷與海岸平原，是東部最大宗（也是全臺人口最多）的原住民族。", "錯誤。賽夏族分布於新竹、苗栗一帶。"]);
+            addQ("關於臺灣原住民的文化保存，講義中提到「除了被漢化外，還會受到同化」。這句話主要在說明哪一種現象？", ["平埔族會受到鄰近高山族(或強勢原住民族)的影響而改變文化", "漢人會被原住民同化", "日本文化完全取代了原住民文化", "南島語族同化了歐洲文化"], 0, ["正確。弱勢的原住民族(含平埔族)除了受漢人影響，也可能因為通婚或部落依附，被勢力較大的高山族同化，使得文化保存更加困難。", "錯誤。雖有此現象(如牽手番)，但非講義強調重點。", "錯誤。未完全取代。", "錯誤。無此現象。"]);
+            addQ("若你要前往「蘭嶼」體驗最道地的原住民海洋文化（如飛魚祭、拼板舟），你拜訪的對象是哪一個族群？", ["卑南族", "魯凱族", "達悟族(雅美族)", "鄒族"], 2, ["錯誤。卑南在臺東平原。", "錯誤。魯凱在屏東、高雄山區。", "正確。達悟族(舊稱雅美族)居住於臺東外海的蘭嶼，以獨特的海洋文化聞名。", "錯誤。鄒族在阿里山區。"]);
+            addQ("小明將臺灣原住民族的特徵做成比較表。下列哪一個選項的內容「錯誤」？", ["【高山族】分布：山區、東部、蘭嶼", "【平埔族】漢化程度：較高", "【平埔族】清代稱呼：多被編為生番", "【高山族】日治稱呼：高砂族"], 2, ["正確。符合講義內容。", "正確。因居平地較早接觸漢人。", "錯誤。平埔族因較早被清朝統治、納稅，多被歸類為「熟番」。生番多指未歸化的高山族。", "正確。日治時期依居住地將山區原住民稱為高砂族。"]);
+
+            return qList;
+        };
+
+        let currentTab = 'login';
+        let learnSubTab = 'sec1';
+        let quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+        let isLearnMenuOpen = false;
+
+        const el = id => document.getElementById(id);
+
+        const syncQuestionsFormat = (state) => {
+            if (!state || !state.questions) return state;
+            if (state.questions.length > 0 && !state.questions[0].exps) {
+                const freshQuestions = generate60Questions();
+                state.questions = state.questions.map(oldQ => {
+                    const freshQ = freshQuestions.find(fq => fq.q === oldQ.q);
+                    if (freshQ) return { ...freshQ, showExplanation: oldQ.showExplanation, selectedAns: oldQ.selectedAns, isCorrect: oldQ.isCorrect };
+                    return oldQ;
+                });
+            }
+            return state;
+        };
+
+        window.toggleLearnMenu = (show) => {
+            isLearnMenuOpen = typeof show === 'boolean' ? show : !isLearnMenuOpen;
+            const drawer = el('learn-drawer');
+            const overlay = el('learn-overlay');
+            if(drawer && overlay) {
+                if(isLearnMenuOpen) {
+                    drawer.classList.remove('-translate-x-full');
+                    overlay.classList.remove('hidden');
+                } else {
+                    drawer.classList.add('-translate-x-full');
+                    overlay.classList.add('hidden');
+                }
+            }
+        };
+
+        const listenToGlobalUsers = () => {
+            if (!isFirebaseInitialized || !currentUser) return;
+            const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+            if(unsubscribeGlobal) unsubscribeGlobal();
+            unsubscribeGlobal = onSnapshot(globalRef, (snap) => {
+                if(snap.exists()) recentUsers = snap.data().users || [];
+                else recentUsers = [];
+                if(currentTab === 'login') renderLogin();
+            });
+        };
+
+        const listenToUserDocument = (name) => {
+            if (!isFirebaseInitialized || !currentUser) {
+                loadLocalData(name);
+                return;
+            }
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, name);
+            if(unsubscribeUser) unsubscribeUser();
+            unsubscribeUser = onSnapshot(userRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, data);
+                    saveLocalData(name);
+                    
+                    if (userData.quizState) {
+                        userData.quizState = syncQuestionsFormat(userData.quizState); 
+                        const cloudStateStr = JSON.stringify(userData.quizState);
+                        const localStateStr = JSON.stringify(quizState);
+                        if (cloudStateStr !== localStateStr) {
+                            quizState = userData.quizState;
+                            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, cloudStateStr); } catch(e) {}
+                            if(currentTab === 'quiz') {
+                                let scrollPos = 0;
+                                const scrollContainer = document.getElementById('quiz-scroll-container');
+                                if (scrollContainer) scrollPos = scrollContainer.scrollTop;
+                                renderQuizView(document.getElementById('main-content'));
+                                setTimeout(() => {
+                                    const newScrollContainer = document.getElementById('quiz-scroll-container');
+                                    if (newScrollContainer && scrollPos > 0) newScrollContainer.scrollTop = scrollPos;
+                                }, 10);
+                                const navStats = document.getElementById('nav-quiz-stats');
+                                if (navStats) {
+                                    if (quizState.active) {
+                                        navStats.classList.remove('hidden');
+                                        navStats.classList.add('flex');
+                                        updateQuizStats();
+                                    } else {
+                                        navStats.classList.add('hidden');
+                                        navStats.classList.remove('flex');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [new Date().toISOString()], quizState: null };
+                    setDoc(userRef, userData, { merge: true });
+                }
+                if(currentTab === 'favorites') renderFavorites();
+                else if(currentTab === 'mistakes') renderMistakes();
+                else if(currentTab === 'history') renderHistory();
+            }, (error) => console.error("Listen user error", error));
+        };
+
+        const saveUserDataToCloud = async () => {
+            saveLocalData(username);
+            if (!isFirebaseInitialized || !currentUser || !username) return;
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+            try { await setDoc(userRef, userData, { merge: true }); } catch(e) { console.error("Firebase save error:", e); }
+        };
+
+        const loadLocalData = (name) => {
+            try {
+                const localData = localStorage.getItem(`${COLLECTION_NAME}_${name}_data`);
+                if (localData) userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, JSON.parse(localData));
+            } catch(e) {}
+        };
+
+        const saveLocalData = (name) => {
+            try { if (name) localStorage.setItem(`${COLLECTION_NAME}_${name}_data`, JSON.stringify(userData)); } catch(e) {}
+        };
+
+        const saveQuizState = () => {
+            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e) {}
+            userData.quizState = quizState;
+            saveUserDataToCloud();
+        };
+
+        const loadLocalQuizState = () => {
+            if (userData.quizState) { quizState = syncQuestionsFormat(userData.quizState); return; }
+            try {
+                const localQuiz = localStorage.getItem(`${COLLECTION_NAME}_${username}_quiz`);
+                if (localQuiz) {
+                    const q = JSON.parse(localQuiz);
+                    if (q && q.active) quizState = syncQuestionsFormat(q);
+                }
+            } catch(e) {}
+        };
+
+        const initApp = async () => {
+            renderApp();
+            const lastUser = localStorage.getItem(`${COLLECTION_NAME}_last_user`);
+            if (isFirebaseInitialized) {
+                await initAuth(); 
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUser = user;
+                        listenToGlobalUsers();
+                        if (lastUser) {
+                            username = lastUser;
+                            setTimeout(() => listenToUserDocument(username), 200);
+                            loadLocalQuizState();
+                            renderMain();
+                        } else renderLogin();
+                    } else renderLogin();
+                });
+            } else {
+                if (lastUser) {
+                    username = lastUser;
+                    loadLocalData(username);
+                    loadLocalQuizState();
+                    renderMain();
+                } else renderLogin();
+            }
+        };
+
+        window.handleLogin = async (name) => {
+            if(!name.trim()) {
+                const inputEl = document.getElementById('usernameInput');
+                inputEl.classList.add('border-red-500', 'bg-red-50');
+                inputEl.placeholder = "名稱不能為空！";
+                setTimeout(() => {
+                    inputEl.classList.remove('border-red-500', 'bg-red-50');
+                    inputEl.placeholder = "✍️ 請輸入您的姓名/座號";
+                }, 2000);
+                return;
+            }
+            username = name;
+            localStorage.setItem(`${COLLECTION_NAME}_last_user`, username);
+            if (isFirebaseInitialized && currentUser) {
+                const now = new Date().toISOString();
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                try {
+                    const snap = await getDoc(userRef);
+                    if (snap.exists()) {
+                        userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, snap.data());
+                        if (userData.quizState) {
+                            quizState = syncQuestionsFormat(userData.quizState);
+                            try { localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e){}
+                        }
+                    } else loadLocalData(username);
+                    if (!userData.loginHistory) userData.loginHistory = [];
+                    userData.loginHistory.push(now);
+                    if (userData.loginHistory.length > 50) userData.loginHistory = userData.loginHistory.slice(-50);
+                    await setDoc(userRef, userData, { merge: true });
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const gSnap = await getDoc(globalRef);
+                    let users = gSnap.exists() ? gSnap.data().users || [] : [];
+                    users = users.filter(u => u.name !== username);
+                    users.push({ name: username, lastLogin: now });
+                    if(users.length > 10) users = users.slice(-10);
+                    await setDoc(globalRef, { users }, { merge: true });
+                } catch(e) { console.error("Login data sync error:", e); }
+                listenToUserDocument(username);
+            } else {
+                loadLocalData(username);
+                if (!userData.loginHistory) userData.loginHistory = [];
+                userData.loginHistory.push(new Date().toISOString());
+                saveLocalData(username);
+            }
+            renderMain();
+            initAudio(); // Initialize audio on first user interaction
+        };
+
+        const renderApp = () => { el('app').innerHTML = `<div id="view-container" class="w-full h-full flex flex-col bg-amber-50"></div>`; };
+
+        window.renderLogin = () => {
+            currentTab = 'login';
+            el('view-container').innerHTML = `
+                <div class="flex-1 flex flex-col items-center justify-center relative overflow-hidden p-6 z-0">
+                    <div class="absolute inset-0 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 -z-20"></div>
+                    <div class="absolute -top-20 -left-20 w-96 h-96 bg-gradient-to-r from-indigo-300 to-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-pulse -z-10"></div>
+                    <div class="absolute top-40 -right-20 w-80 h-80 bg-gradient-to-r from-purple-300 to-pink-400 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-pulse -z-10" style="animation-delay: 1s;"></div>
+                    <div class="absolute -bottom-32 left-1/3 w-80 h-80 bg-gradient-to-r from-rose-300 to-indigo-400 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-pulse -z-10" style="animation-delay: 2s;"></div>
+                    <div class="absolute top-6 right-6 z-20">
+                        <div class="flex flex-col items-end gap-3 w-full md:w-auto">
+                            <div class="glass-card px-4 py-2 rounded-full shadow-sm text-sm font-bold text-indigo-800 flex items-center border border-white/50">
+                                <span class="status-dot ${connectionStatus === 'loading' ? 'status-loading' : connectionStatus === 'success' ? 'status-success' : 'status-error'}"></span>
+                                ${connectionStatus === 'loading' ? '雲端讀取中... ⏳' : connectionStatus === 'success' ? '雲端已同步 ☁️✨' : '雲端連線失敗 ❌'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-card p-8 md:p-12 rounded-3xl shadow-2xl z-10 w-[42rem] max-w-[95vw] text-center border border-white/60">
+                        <div class="w-24 h-24 bg-gradient-to-br from-pink-400 to-rose-500 rounded-2xl mx-auto mb-6 flex items-center justify-center shadow-lg transform -rotate-6">
+                            <span class="text-6xl text-white">🎒</span>
+                        </div>
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-indigo-950 mb-4 tracking-widest leading-tight">單元1<br>史前文化與臺灣原住民</h1>
+                        <p class="text-indigo-600 mb-10 text-xl md:text-2xl font-bold bg-indigo-100 inline-block px-5 py-2 rounded-full border border-indigo-200 shadow-sm">🎯 60題 會考魔王版 👑</p>
+                        <div class="space-y-6">
+                            <input type="text" id="usernameInput" placeholder="✍️ 請輸入您的姓名/座號" class="w-full px-6 py-5 text-xl rounded-2xl border-2 border-indigo-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 text-center transition-all bg-white/80 backdrop-blur-sm shadow-inner">
+                            <button onclick="handleLogin(document.getElementById('usernameInput').value)" class="w-full bg-gradient-to-r from-pink-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-bold py-5 px-6 text-2xl rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-1">
+                                進入學習系統 🚀🌈🎉
+                            </button>
+                        </div>
+                        <div class="mt-10 border-t border-indigo-200/50 pt-6">
+                            <p class="text-base text-indigo-700/60 mb-4 font-bold tracking-wide">☁️ 雲端最近登入 👥</p>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                ${recentUsers.length > 0 ? recentUsers.slice().reverse().slice(0, 8).map(u => `<button onclick="handleLogin('${u.name}')" class="text-base font-bold bg-white/80 border-2 border-indigo-200 text-indigo-800 hover:bg-indigo-100 hover:text-indigo-900 hover:border-indigo-400 px-5 py-2.5 rounded-xl shadow-sm transition-all">${u.name}</button>`).join('') : `<span class="text-base text-indigo-700/60 bg-white/50 px-5 py-2.5 rounded-xl">尚無紀錄或尚未連線</span>`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.renderMain = () => {
+            el('view-container').innerHTML = `
+                <nav class="glass-nav text-white shadow-lg z-20 shrink-0" style="background: rgba(225, 29, 72, 0.9);">
+                    <div class="w-full px-2 sm:px-4 md:px-6 lg:px-8 mx-auto">
+                        <div class="flex justify-between items-center h-20 w-full overflow-x-auto scrollbar-hide gap-2 md:gap-4">
+                            <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+                                <span class="font-extrabold text-xl md:text-2xl lg:text-xl xl:text-3xl tracking-widest hidden lg:flex items-center shrink-0 text-white drop-shadow-md">
+                                    <span class="bg-white/20 p-2 rounded-xl mr-2 xl:mr-3 shadow-sm">📖</span>史前文化 ✨
+                                </span>
+                                <div class="flex items-center bg-white/20 px-2 py-1.5 md:px-3 rounded-full border border-white/10 shadow-inner text-sm md:text-base font-medium shrink-0">
+                                    <span class="status-dot ${connectionStatus === 'loading' ? 'bg-amber-400' : connectionStatus === 'success' ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                                    <span class="hidden sm:inline text-white">${connectionStatus === 'loading' ? '讀取中' : connectionStatus === 'success' ? '已同步' : '連線失敗'}</span>
+                                </div>
+                                <div id="nav-quiz-stats" class="hidden items-center ml-1 sm:ml-2 animate-fade-in shrink-0 gap-2 md:gap-3">
+                                    <div class="flex items-center bg-white px-3 py-1.5 md:px-4 md:py-1.5 rounded-xl shadow-md text-sm md:text-lg font-bold shrink-0 text-indigo-950">
+                                        <span class="text-emerald-600 flex items-center"><span class="mr-1 md:mr-2">✅</span><span id="nav-stat-correct">0</span></span>
+                                        <div class="w-px bg-slate-300 h-4 md:h-5 mx-2 md:mx-3"></div>
+                                        <span class="text-rose-600 flex items-center"><span class="mr-1 md:mr-2">❌</span><span id="nav-stat-incorrect">0</span></span>
+                                    </div>
+                                    <div class="hidden xl:flex flex-col w-24 lg:w-32 shrink-0">
+                                        <div class="w-full bg-rose-950/40 rounded-full h-3.5 overflow-hidden shadow-inner border border-white/20">
+                                            <div id="nav-stat-progress-bar" class="bg-gradient-to-r from-amber-300 to-amber-500 h-full rounded-full transition-all duration-500 relative overflow-hidden" style="width: 0%">
+                                                <div class="absolute inset-0 bg-white/30 w-full h-full" style="background-image: linear-gradient(45deg,rgba(255,255,255,.2) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.2) 50%,rgba(255,255,255,.2) 75%,transparent 75%,transparent); background-size: 1rem 1rem;"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center space-x-1 sm:space-x-2 lg:space-x-3 shrink-0 pl-1 md:pl-2">
+                                <button onclick="switchTab('learn')" id="nav-learn" class="whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10"><span class="mr-1.5 hidden sm:inline">📚</span>學習</button>
+                                <button onclick="switchTab('quiz')" id="nav-quiz" class="whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10"><span class="mr-1.5 hidden sm:inline">🎯</span>測驗(60)</button>
+                                <button onclick="switchTab('mistakes')" id="nav-mistakes" class="whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10"><span class="mr-1.5 hidden sm:inline">🩹</span>錯題</button>
+                                <button onclick="switchTab('favorites')" id="nav-favorites" class="whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10"><span class="mr-1.5 hidden sm:inline">💖</span>最愛</button>
+                                <button onclick="switchTab('history')" id="nav-history" class="whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10"><span class="mr-1.5 hidden sm:inline">📜</span>紀錄</button>
+                                
+                                <div class="ml-1 sm:ml-2 lg:ml-4 flex items-center pl-2 sm:pl-3 lg:pl-5 border-l border-white/30 shrink-0 whitespace-nowrap gap-1 md:gap-2">
+                                    <div class="text-sm md:text-base lg:text-lg xl:text-xl font-bold bg-white/20 px-2 py-1.5 md:px-3 lg:px-4 lg:py-2 rounded-xl text-white shadow-inner flex items-center">
+                                        <span class="mr-1 lg:mr-2">👤</span>${username}
+                                    </div>
+                                    <button onclick="deleteUserData()" class="text-white/70 hover:text-white hover:bg-white/20 p-1.5 lg:p-2 rounded-lg transition-colors text-base lg:text-xl" title="刪除帳號紀錄">🗑️</button>
+                                    <button onclick="logout()" class="text-white/70 hover:text-white hover:bg-white/20 p-1.5 lg:p-2 rounded-lg transition-colors text-base lg:text-xl" title="登出">🚪</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </nav>
+                <div id="main-content" class="flex-1 overflow-hidden flex flex-col w-full z-10 relative">
+                    <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCI+CjxyZWN0IHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCIgZmlsbD0ibm9uZSIvPgo8Y2lyY2xlIGN4PSI0MCIgY3k9IjQwIiByPSIxIiBmaWxsPSIjZjVjNWMyIi8+Cjwvc3ZnPg==')] opacity-50 z-0"></div>
+                </div>
+            `;
+            switchTab('learn');
+        };
+
+        window.deleteUserData = async () => {
+            if(!confirm(`確定要從雲端刪除選手 ${username} 的所有資料？此操作無法復原！`)) return;
+            if(!confirm(`⚠️ 再次警告：這將永久刪除 ${username} 的所有進度、錯題與紀錄！\n\n您真的確定要執行刪除嗎？`)) return;
+            try {
+                if (isFirebaseInitialized && currentUser) {
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const snap = await getDoc(globalRef);
+                    if(snap.exists()) {
+                        let users = snap.data().users || [];
+                        users = users.filter(u => u.name !== username);
+                        await setDoc(globalRef, { users }, { merge: true });
+                    }
+                    const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                    await setDoc(userRef, { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, { merge: true });
+                }
+                localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_data`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_quiz`);
+                userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+                if(unsubscribeUser) unsubscribeUser();
+                username = '';
+                renderLogin();
+            } catch(e) { alert("刪除失敗，請稍後再試"); }
+        };
+
+        window.logout = () => {
+            username = '';
+            userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+            quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+            localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+            if(unsubscribeUser) unsubscribeUser();
+            renderLogin();
+        };
+
+        window.switchTab = (tab) => {
+            currentTab = tab;
+            ['learn', 'quiz', 'mistakes', 'favorites', 'history'].forEach(t => {
+                const btn = el(`nav-${t}`);
+                if(btn) {
+                    if(t === tab) btn.className = 'whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-white bg-white/20 text-white shadow-lg';
+                    else btn.className = 'whitespace-nowrap px-2 py-2 md:px-3 lg:px-4 lg:py-2.5 rounded-xl text-sm md:text-base lg:text-lg xl:text-xl font-bold transition-all duration-200 border-2 border-transparent text-white/70 hover:text-white hover:bg-white/10';
+                }
+            });
+            const navStats = el('nav-quiz-stats');
+            if (navStats) {
+                if (tab === 'quiz' && quizState.active) {
+                    navStats.classList.remove('hidden'); navStats.classList.add('flex'); updateQuizStats();
+                } else { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+            }
+            const content = el('main-content');
+            if(tab === 'learn') renderLearnView(content);
+            if(tab === 'quiz') renderQuizView(content);
+            if(tab === 'mistakes') renderMistakes(content);
+            if(tab === 'favorites') renderFavorites(content);
+            if(tab === 'history') renderHistory(content);
+        };
+
+        const renderLearnView = (container) => {
+            const currentData = learnData.find(d => d.id === learnSubTab);
+            const themeColors = {
+                'orange': 'text-orange-900 bg-orange-50 border-orange-200',
+                'teal': 'text-teal-900 bg-teal-50 border-teal-200',
+                'emerald': 'text-emerald-900 bg-emerald-50 border-emerald-200',
+                'purple': 'text-purple-900 bg-purple-50 border-purple-200',
+                'pink': 'text-pink-900 bg-pink-50 border-pink-200',
+                'amber': 'text-amber-900 bg-amber-50 border-amber-200',
+                'rose': 'text-rose-900 bg-rose-50 border-rose-200',
+                'blue': 'text-blue-900 bg-blue-50 border-blue-200'
+            };
+            const activeTheme = currentData && currentData.theme ? themeColors[currentData.theme] : 'text-indigo-900 bg-indigo-50 border-indigo-200';
+
+            container.innerHTML = `
+                <div class="w-full ${activeTheme} border-b p-4 flex items-center shadow-sm z-10 shrink-0 overflow-hidden transition-colors duration-300">
+                    <button onclick="toggleLearnMenu(true)" class="text-indigo-800 hover:text-rose-600 focus:outline-none flex items-center px-4 py-2 bg-white/80 rounded-xl border border-white shadow-sm mr-4 transition-all hover:shadow">
+                        <i class="fas fa-bars text-xl md:mr-3"></i>
+                        <span class="font-bold text-lg hidden md:inline tracking-wide">單元選單</span>
+                    </button>
+                    <span class="font-extrabold text-xl md:text-2xl lg:text-3xl truncate drop-shadow-sm" id="current-learn-title">${currentData ? currentData.title : ''}</span>
+                </div>
+                <div id="learn-overlay" onclick="toggleLearnMenu(false)" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 hidden transition-opacity duration-300"></div>
+                <div id="learn-drawer" class="fixed inset-y-0 left-0 w-[24rem] max-w-[85vw] bg-white border-r border-indigo-100 z-40 transform -translate-x-full transition-transform duration-300 ease-in-out overflow-y-auto shadow-2xl flex flex-col">
+                    <div class="p-6 bg-rose-50 flex justify-between items-center border-b border-rose-100 shrink-0">
+                        <span class="font-extrabold text-2xl text-rose-900">📑 學習目錄 🗺️</span>
+                        <button onclick="toggleLearnMenu(false)" class="text-rose-400 hover:text-rose-600 transition-colors bg-white w-10 h-10 rounded-full flex items-center justify-center shadow-sm border border-rose-100"><i class="fas fa-times text-xl"></i></button>
+                        </div>
+                    <ul class="py-4 flex-1 px-3 space-y-1">
+                        ${learnData.map(d => {
+                            const isSelected = learnSubTab === d.id;
+                            const themeConfig = {
+                                'orange': isSelected ? 'bg-orange-50 text-orange-900 border-orange-500' : 'hover:bg-orange-50/50',
+                                'teal': isSelected ? 'bg-teal-50 text-teal-900 border-teal-500' : 'hover:bg-teal-50/50',
+                                'emerald': isSelected ? 'bg-emerald-50 text-emerald-900 border-emerald-500' : 'hover:bg-emerald-50/50',
+                                'purple': isSelected ? 'bg-purple-50 text-purple-900 border-purple-500' : 'hover:bg-purple-50/50',
+                                'pink': isSelected ? 'bg-pink-50 text-pink-900 border-pink-500' : 'hover:bg-pink-50/50',
+                                'amber': isSelected ? 'bg-amber-50 text-amber-900 border-amber-500' : 'hover:bg-amber-50/50',
+                                'rose': isSelected ? 'bg-rose-50 text-rose-900 border-rose-500' : 'hover:bg-rose-50/50',
+                                'blue': isSelected ? 'bg-blue-50 text-blue-900 border-blue-500' : 'hover:bg-blue-50/50'
+                            };
+                            const defaultClass = isSelected ? 'bg-indigo-50 text-indigo-900 border-indigo-500 shadow-sm' : 'text-slate-600 border-transparent hover:bg-indigo-50';
+                            const activeClass = d.theme ? themeConfig[d.theme] : defaultClass;
+                            return `
+                            <li>
+                                <button onclick="selectLearnTab('${d.id}')" id="ltab-${d.id}" class="w-full text-left px-5 py-4 text-lg md:text-xl font-bold rounded-xl transition-all border-l-4 ${isSelected ? activeClass + ' shadow-sm' : 'text-slate-600 border-transparent hover:bg-indigo-50 hover:pl-6 hover:text-indigo-800'}">
+                                    ${d.title}
+                                </button>
+                            </li>
+                        `}).join('')}
+                    </ul>
+                </div>
+                <div class="flex-1 p-4 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden w-full relative z-10" id="learn-content-area"></div>
+            `;
+            renderLearnContent();
+        };
+
+        window.selectLearnTab = (id) => {
+            learnSubTab = id;
+            renderLearnView(el('main-content')); 
+            toggleLearnMenu(false);
+        };
+
+        window.renderLearnContent = () => {
+            const area = el('learn-content-area');
+            if(!area) return;
+            const data = learnData.find(d => d.id === learnSubTab);
+            area.innerHTML = `<div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto animate-fade-in pb-12">${data.content}</div>`;
+        };
+
+        const renderQuizView = (container) => {
+            if(!quizState.active) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 overflow-y-auto relative z-10">
+                        <div class="glass-card p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-4xl lg:max-w-5xl w-full border border-white/60 relative overflow-hidden">
+                            <div class="absolute top-0 right-0 w-40 h-40 bg-rose-100 rounded-bl-full -z-10 opacity-50"></div>
+                            <div class="w-24 h-24 md:w-32 md:h-32 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full mx-auto mb-8 flex items-center justify-center shadow-lg">
+                                <span class="text-6xl md:text-7xl text-white">🏺</span>
+                            </div>
+                            <h2 class="text-3xl md:text-5xl font-extrabold mb-6 text-emerald-950 tracking-wide">史前文化 60題挑戰 🏆🔥</h2>
+                            <p class="text-emerald-800/80 mb-10 text-xl md:text-2xl leading-loose">
+                                從舊石器、新石器到金屬器，再到原住民族的起源傳說，快來驗收學習成果！<br>
+                                <span class="bg-emerald-100 text-emerald-800 font-bold px-5 py-2 rounded-full inline-block mt-6 border border-emerald-200 shadow-sm">🌊 瀑布流模式</span><br>
+                                <span class="text-lg md:text-xl text-emerald-600 mt-3 block font-bold">🎯 點擊選項後，詳細解析將直接顯示在每個選項框框內，無須滑動對照！</span>
+                            </p>
+                            <button onclick="startQuiz()" class="w-full sm:w-auto bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-bold py-5 px-16 text-2xl md:text-3xl rounded-2xl shadow-xl transition-all transform hover:-translate-y-1 hover:shadow-2xl">
+                                開始挑戰 🚀🔥
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                renderQuizWaterfall(container);
+            }
+        };
+
+        window.startQuiz = () => {
+            initAudio(); // Explicitly init audio on button click
+            const qList = [...generate60Questions()].sort(() => 0.5 - Math.random()).map(q => ({
+                ...q, selectedAns: null, showExplanation: false, isCorrect: false
+            }));
+            quizState = { active: true, isFinished: false, questions: qList };
+            saveQuizState();
+            renderQuizView(el('main-content'));
+            const navStats = el('nav-quiz-stats');
+            if (navStats) { navStats.classList.remove('hidden'); navStats.classList.add('flex'); }
+            updateQuizStats();
+        };
+
+        window.updateQuizStats = () => {
+            if (!quizState.active) return;
+            let correct = 0; let incorrect = 0; let answered = 0;
+            const total = quizState.questions.length;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answered++;
+                    if (q.isCorrect) correct++; else incorrect++;
+                }
+            });
+            const progressPercent = (answered / total) * 100;
+            const elCorrect = document.getElementById('nav-stat-correct');
+            const elIncorrect = document.getElementById('nav-stat-incorrect');
+            const elBar = document.getElementById('nav-stat-progress-bar');
+            if (elCorrect) elCorrect.innerText = correct;
+            if (elIncorrect) elIncorrect.innerText = incorrect;
+            if (elBar) elBar.style.width = progressPercent + '%';
+        };
+
+        window.restartQuizWithConfirm = () => {
+            if(confirm('確定要重新開始挑戰嗎？這將會清除目前的畫面，並產生全新的測驗題目！')) startQuiz();
+        };
+
+        const renderQuizWaterfall = (container) => {
+            const total = quizState.questions.length;
+            const isFinished = quizState.isFinished;
+            
+            let headerHtml = isFinished 
+                ? ` <div class="glass-card flex flex-col md:flex-row justify-between items-center rounded-2xl p-5 md:p-6 shadow-lg border border-emerald-300 mb-10 sticky top-0 z-50 backdrop-blur-xl bg-gradient-to-r from-teal-50 to-emerald-50">
+                        <div class="flex items-center mb-4 md:mb-0">
+                            <span class="text-5xl mr-4 drop-shadow-md">🏆✨</span>
+                            <div>
+                                <h2 class="text-2xl md:text-3xl font-extrabold text-emerald-900">測驗結算完成 🎉</h2>
+                                <p class="text-emerald-700 font-bold text-lg mt-1">總分：<span class="text-3xl md:text-4xl text-emerald-600 font-black">${quizState.scorePercent}</span> 分 (答對 ${quizState.correctCount} / 共 ${total} 題)</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="switchTab('mistakes')" class="text-base md:text-lg text-emerald-600 hover:text-white hover:bg-emerald-500 px-4 py-2 rounded-xl font-bold transition-colors flex items-center border-2 border-emerald-200 hover:border-emerald-500 bg-white"><span class="mr-2">🩹</span>錯題本</button>
+                            <button onclick="restartQuizWithConfirm()" class="text-base md:text-lg text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 px-4 py-2 rounded-xl font-bold transition-colors flex items-center shadow-md hover:shadow-lg"><span class="mr-2">🔄</span>重新挑戰</button>
+                        </div>
+                    </div>`
+                : ` <div class="flex justify-end mb-4">
+                        <button onclick="clearQuizHistory()" class="text-sm md:text-base text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-4 py-2 rounded-xl font-bold transition-colors flex items-center border border-rose-200 bg-white shadow-sm"><span class="mr-2">🚪</span>放棄作答</button>
+                    </div>`;
+
+            let html = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 scrollbar-hide relative z-10" id="quiz-scroll-container">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto relative">
+                        ${headerHtml}
+                        <div id="questions-list" class="space-y-10 w-full">
+            `;
+            quizState.questions.forEach((_, qIdx) => { html += `<div id="q-block-${qIdx}" class="bg-white rounded-3xl shadow-lg overflow-hidden border border-emerald-100 transition-all w-full">${generateSingleQuestionHtml(qIdx)}</div>`; });
+            html += `</div>`;
+            
+            if (!isFinished) {
+                html += `
+                        <button onclick="finishQuizWaterfall()" class="w-full mt-16 bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-3xl shadow-2xl transition-all transform hover:-translate-y-2 hover:shadow-[0_20px_40px_rgba(0,0,0,0.2)] flex items-center justify-center break-words border-b-8 border-emerald-700">
+                            🏁 完成測驗並結算成績 📊🎉
+                        </button>`;
+            } else {
+                 html += `
+                        <button onclick="restartQuizWithConfirm()" class="w-full mt-16 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-3xl shadow-2xl transition-all transform hover:-translate-y-2 hover:shadow-[0_20px_40px_rgba(0,0,0,0.2)] flex items-center justify-center break-words border-b-8 border-teal-700">
+                            🔄 重新開始挑戰 🚀💪
+                        </button>`;                
+            }
+            html += `</div></div>`;
+            container.innerHTML = html;
+        };
+
+        const generateSingleQuestionHtml = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            let optionsHtml = '';
+            
+            q.opts.forEach((opt, i) => {
+                let btnClass = "w-full text-left p-3 md:p-5 text-xl md:text-2xl rounded-2xl border-2 transition-all duration-200 flex flex-col items-start group relative overflow-hidden ";
+                let iconHtml = `<span class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mr-3 md:mr-5 font-extrabold text-xl md:text-2xl transition-colors shrink-0 shadow-inner group-hover:bg-emerald-100 group-hover:text-emerald-700">${String.fromCharCode(65+i)}</span>`;
+                
+                let optExpHtml = '';
+                
+                if (!q.showExplanation) {
+                    btnClass += "border-emerald-100 hover:border-emerald-400 hover:bg-emerald-50/50 bg-white cursor-pointer hover:shadow-md";
+                } else {
+                    let expText = (q.exps && q.exps[i]) ? q.exps[i] : '無詳細解析';
+                    
+                    if (i === q.ans) {
+                        btnClass += "border-emerald-400 bg-emerald-50/30 text-emerald-900 shadow-md z-10 ring-2 ring-emerald-400/20";
+                        iconHtml = `<span class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-emerald-500 text-white flex items-center justify-center mr-3 md:mr-5 font-bold text-2xl md:text-3xl shrink-0 shadow-sm">✅</span>`;
+                        optExpHtml = `<div class="mt-3 p-3 md:p-4 rounded-xl text-base md:text-lg border border-emerald-200 bg-emerald-100/60 text-emerald-900 animate-fade-in w-full leading-relaxed font-medium"><span class="font-bold mr-2 text-emerald-700">🎯 解析：</span>${expText}</div>`;
+                    } else if (i === q.selectedAns) {
+                        btnClass += "border-rose-400 bg-rose-50/40 text-rose-900";
+                        iconHtml = `<span class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-rose-500 text-white flex items-center justify-center mr-3 md:mr-5 font-bold text-2xl md:text-3xl shrink-0 shadow-sm">❌</span>`;
+                        optExpHtml = `<div class="mt-3 p-3 md:p-4 rounded-xl text-base md:text-lg border border-rose-200 bg-rose-100/60 text-rose-900 animate-fade-in w-full leading-relaxed font-medium"><span class="font-bold mr-2 text-rose-700">💡 解析：</span>${expText}</div>`;
+                    } else {
+                        btnClass += "border-slate-200 bg-slate-50/60 opacity-90 cursor-not-allowed";
+                        iconHtml = `<span class="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-slate-200 text-slate-500 flex items-center justify-center mr-3 md:mr-5 font-extrabold text-xl md:text-2xl shrink-0">${String.fromCharCode(65+i)}</span>`;
+                        optExpHtml = `<div class="mt-3 p-3 md:p-4 rounded-xl text-base md:text-lg border border-slate-200 bg-white text-slate-700 animate-fade-in w-full leading-relaxed font-medium"><span class="font-bold mr-2 text-slate-500">💡 解析：</span>${expText}</div>`;
+                    }
+                }
+
+                optionsHtml += `
+                    <button ${q.showExplanation ? 'disabled' : `onclick="answerWaterfallQuestion(${qIdx}, ${i})"`} class="${btnClass}">
+                        <div class="flex items-center w-full">
+                            ${iconHtml}
+                            <span class="flex-1 leading-relaxed break-words z-10 text-left ${q.showExplanation && i === q.ans ? 'text-emerald-900 font-bold' : 'text-slate-800 font-medium'} group-hover:text-emerald-950">${opt}</span>
+                        </div>
+                        ${optExpHtml}
+                    </button>
+                `;
+            });
+
+            let generalExpHtml = '';
+            if (q.showExplanation && q.generalExp) {
+                generalExpHtml = `
+                    <div class="mt-5 p-4 md:p-5 bg-emerald-50/80 border border-emerald-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                        <div class="absolute left-0 top-0 bottom-0 w-2 bg-emerald-400"></div>
+                        <p class="text-lg md:text-xl leading-loose break-words whitespace-pre-wrap pl-3 font-bold text-emerald-900">${q.generalExp}</p>
+                    </div>
+                `;
+            }
+
+            const isFav = userData.favorites && userData.favorites.includes(q.q);
+            const favIconHtml = isFav 
+                ? '<i class="fa-solid fa-heart text-rose-500"></i>' 
+                : '<i class="fa-regular fa-heart text-rose-500"></i>';
+
+            let statusTag = '';
+            let bgGradient = '';
+            if (q.showExplanation) {
+                if (q.selectedAns === q.ans) {
+                    statusTag = '<span class="text-emerald-600 font-bold text-lg md:text-xl flex items-center bg-emerald-100 px-3 py-1 rounded-full shadow-sm"><span class="mr-2">✅</span>答對 🎉</span>';
+                    bgGradient = 'bg-gradient-to-r from-emerald-50 to-white';
+                } else if (q.selectedAns === -1) {
+                    statusTag = '<span class="text-amber-600 font-bold text-lg md:text-xl flex items-center bg-amber-100 px-3 py-1 rounded-full shadow-sm"><span class="mr-2">⚠️</span>未作答</span>';
+                    bgGradient = 'bg-gradient-to-r from-amber-50 to-white';
+                } else {
+                    statusTag = '<span class="text-rose-600 font-bold text-lg md:text-xl flex items-center bg-rose-100 px-3 py-1 rounded-full shadow-sm"><span class="mr-2">❌</span>答錯 💦</span>';
+                    bgGradient = 'bg-gradient-to-r from-rose-50 to-white';
+                }
+            } else {
+                statusTag = '<span class="text-emerald-400 font-bold text-base md:text-lg flex items-center bg-emerald-100/50 px-3 py-1 rounded-full border border-emerald-200"><span class="mr-2">✍️</span>作答區</span>';
+                bgGradient = 'bg-emerald-50/30';
+            }
+
+            return `
+                <div class="px-5 md:px-8 py-4 border-b border-emerald-100 flex justify-between items-center transition-colors ${bgGradient}">
+                    <div class="flex items-center">
+                        <span class="font-extrabold text-emerald-500 text-lg md:text-xl bg-white px-3 py-1 rounded-xl border border-emerald-100 shadow-sm">🤔 Q ${qIdx + 1}</span>
+                        <button onclick="toggleQuizFavorite(${qIdx})" class="ml-4 text-[1.5rem] md:text-3xl hover:scale-110 transition-transform focus:outline-none drop-shadow-sm" title="加入/取消最愛">
+                            ${favIconHtml}
+                        </button>
+                    </div>
+                    ${statusTag}
+                </div>
+                <div class="p-5 md:p-8 w-full overflow-hidden">
+                    <h3 class="text-2xl md:text-3xl font-extrabold text-slate-800 mb-6 leading-loose break-words text-left">${q.q}</h3>
+                    <div class="space-y-3 w-full">
+                        ${optionsHtml}
+                    </div>
+                    ${generalExpHtml}
+                </div>
+            `;
+        };
+
+        window.toggleQuizFavorite = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            const qText = q.q;
+            if (!userData.favorites) userData.favorites = [];
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) userData.favorites.splice(idx, 1);
+            else userData.favorites.push(qText);
+            saveUserDataToCloud();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+        };
+
+        window.answerWaterfallQuestion = (qIdx, optIdx) => {
+            const q = quizState.questions[qIdx];
+            if(q.showExplanation) return; 
+
+            const isCorrect = optIdx === q.ans;
+            q.selectedAns = optIdx;
+            q.showExplanation = true;
+            q.isCorrect = isCorrect;
+            
+            if (isCorrect) {
+                playCorrectSound();
+                confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 }, zIndex: 10000, colors: ['#059669', '#10b981', '#34d399', '#6ee7b7', '#a7f3d0'] });
+            } else {
+                playWrongSound();
+                const mistakeId = q.q; 
+                if(!userData.mistakes) userData.mistakes = [];
+                const exists = userData.mistakes.find(m => m.id === mistakeId);
+                if(!exists) {
+                    userData.mistakes.push({
+                        id: mistakeId, q: q.q, opts: q.opts, ans: q.ans, exps: q.exps, generalExp: q.generalExp, time: new Date().toISOString()
+                    });
+                    saveUserDataToCloud();
+                }
+            }
+            saveQuizState();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+            updateQuizStats();
+        };
+
+        window.finishQuizWaterfall = async () => {
+            let correctCount = 0; let answeredCount = 0;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answeredCount++;
+                    if (q.isCorrect) correctCount++;
+                }
+            });
+            if (answeredCount < quizState.questions.length) {
+                if(!confirm(`您還有 ${quizState.questions.length - answeredCount} 題尚未作答，確定要直接交卷結算嗎？未作答的題目將以錯誤計算。`)) return;
+            }
+            quizState.questions.forEach(q => {
+                if (!q.showExplanation) {
+                    q.showExplanation = true; q.isCorrect = false; q.selectedAns = -1;
+                }
+            });
+            quizState.isFinished = true; quizState.correctCount = correctCount; quizState.answeredCount = answeredCount;
+            const total = quizState.questions.length;
+            const scorePercent = Math.round((correctCount / total) * 100);
+            quizState.scorePercent = scorePercent;
+            saveQuizState();
+            
+            if (!userData.quizHistory) userData.quizHistory = [];
+            userData.quizHistory.push({ date: new Date().toLocaleString(), score: scorePercent, total: total, correct: correctCount });
+            if (userData.quizHistory.length > 50) userData.quizHistory = userData.quizHistory.slice(-50);
+            saveUserDataToCloud();
+
+            renderQuizView(document.getElementById('main-content'));
+            confetti({ particleCount: 300, spread: 100, origin: { y: 0.3 }, zIndex: 10000, colors: ['#059669', '#10b981', '#34d399', '#6ee7b7', '#a7f3d0'] });
+            
+            setTimeout(() => {
+                const scrollContainer = document.getElementById('quiz-scroll-container');
+                if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            }, 100);
+        };
+
+        window.clearQuizHistory = () => {
+            if(confirm('警告：確定要清除目前的作答紀錄嗎？\n(此動作將會遺失目前所有測驗進度)')) {
+                if(confirm('【第二次確認】真的要清除作答紀錄並放棄目前測驗嗎？\n按下「確定」將會清空並返回測驗首頁。')) {
+                    quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+                    saveQuizState();
+                    const navStats = document.getElementById('nav-quiz-stats');
+                    if (navStats) { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+                    renderQuizView(document.getElementById('main-content'));
+                }
+            }
+        };
+
+        window.renderMistakes = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.mistakes || userData.mistakes.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-emerald-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-emerald-50 rounded-full flex items-center justify-center mb-8 shadow-inner border-4 border-emerald-200 text-7xl">🥳</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-emerald-950 mb-4">太棒了！✨</h2>
+                        <p class="text-2xl md:text-3xl font-medium text-emerald-800/60">目前沒有任何錯題紀錄 🎉</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-emerald-200 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-emerald-800 flex items-center"><span class="bg-emerald-100 text-emerald-600 w-14 h-14 flex items-center justify-center rounded-2xl mr-5 shadow-sm">🩹</span>錯題本 📚</h2>
+                                <p class="text-emerald-900/50 mt-3 ml-20 font-bold text-lg md:text-xl">收錄您在測驗中答錯的題目，溫故知新 🔄💡</p>
+                            </div>
+                            <button onclick="clearMistakes()" class="text-base md:text-xl text-rose-500 hover:text-rose-700 bg-white hover:bg-rose-50 px-5 py-3 rounded-xl border-2 border-rose-200 shadow-sm font-bold transition-all flex items-center shrink-0 mb-2"><span class="mr-2">🗑️</span>清空</button>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${userData.mistakes.map((m, i) => `
+                                <div class="bg-white p-6 md:p-10 rounded-3xl shadow-lg border border-emerald-100 w-full overflow-hidden relative group">
+                                    <div class="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-emerald-400 to-emerald-600"></div>
+                                    <h3 class="font-extrabold text-emerald-950 mb-6 text-2xl md:text-3xl break-words leading-loose flex items-start text-left">
+                                        <span class="text-emerald-500 mr-3 text-2xl font-black bg-emerald-50 px-3 py-1 rounded-xl">🤔 Q</span>${m.q}
+                                    </h3>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5 text-xl md:text-2xl w-full font-medium text-left">
+                                        ${m.opts.map((opt, idx) => `
+                                            <div class="p-4 md:p-5 rounded-2xl break-words transition-all flex flex-col ${idx === m.ans ? 'bg-emerald-50 text-emerald-900 font-bold border-2 border-emerald-400 shadow-md ring-2 ring-emerald-400/20' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 md:w-10 font-bold ${idx === m.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === m.ans ? '<span class="ml-2 text-emerald-500 text-2xl">✅</span>' : ''}
+                                                </div>
+                                                ${(m.exps && m.exps[idx]) ? `<div class="mt-3 p-3 rounded-xl text-base md:text-lg border ${idx === m.ans ? 'border-emerald-200 bg-emerald-100/50 text-emerald-800' : 'border-slate-200 bg-white text-slate-600'} leading-relaxed font-medium"><span class="font-bold mr-2 ${idx === m.ans ? 'text-emerald-700' : 'text-slate-500'}">${idx === m.ans ? '🎯 解析：' : '💡 解析：'}</span>${m.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${m.generalExp ? `
+                                    <div class="mt-5 p-4 md:p-5 bg-emerald-50/80 border border-emerald-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <div class="absolute left-0 top-0 bottom-0 w-2 bg-emerald-400"></div>
+                                        <p class="text-lg md:text-xl leading-loose break-words whitespace-pre-wrap pl-3 font-bold text-emerald-900">${m.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                            `).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.clearMistakes = () => {
+            if(confirm('警告：確定要清空所有錯題紀錄嗎？\n(此動作無法復原)')) {
+                if(confirm('【第二次確認】真的要徹底清空錯題本嗎？\n按下「確定」將會刪除所有錯題資料。')) {
+                    userData.mistakes = []; saveUserDataToCloud(); renderMistakes();
+                }
+            }
+        };
+
+        window.renderFavorites = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.favorites || userData.favorites.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-emerald-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-rose-50 rounded-full flex items-center justify-center mb-8 shadow-inner border-4 border-rose-100 text-7xl">💔</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-rose-950 mb-4">暫無收藏</h2>
+                        <p class="text-2xl md:text-3xl font-medium text-rose-800/60 mb-10">在測驗中點擊愛心圖示即可收藏題目！ 📌✨</p>
+                        <button onclick="switchTab('quiz')" class="bg-white border-4 border-emerald-200 text-emerald-600 hover:bg-emerald-50 font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            const allQList = generate60Questions();
+            const favQuestions = userData.favorites.map(favText => {
+                return allQList.find(q => q.q === favText) || { q: favText, opts: [], ans: 0, exps: [], generalExp: '題目資料已遺失' };
+            });
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex items-end border-b-4 border-emerald-200 pb-5 mb-12">
+                            <h2 class="text-4xl md:text-5xl font-extrabold text-emerald-800 flex items-center"><span class="bg-rose-100 text-rose-600 w-14 h-14 flex items-center justify-center rounded-2xl mr-5 shadow-sm">💖</span>我的最愛 🌟</h2>
+                            <p class="text-emerald-900/50 mt-3 ml-8 font-bold text-lg md:text-xl hidden sm:block mb-1">您專屬的重點筆記收藏夾 🎒✨</p>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${favQuestions.map((qObj, i) => {
+                                if (qObj.opts.length === 0) return '';
+                                return `
+                                <div class="bg-white p-6 md:p-10 rounded-3xl shadow-lg border border-emerald-100 w-full overflow-hidden relative group">
+                                    <div class="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-emerald-400 to-emerald-600"></div>
+                                    <div class="flex justify-between items-start mb-6">
+                                        <h3 class="font-extrabold text-emerald-950 text-2xl md:text-3xl break-words leading-loose flex items-start pr-6 flex-1 text-left">
+                                            <span class="text-emerald-500 mr-3 text-2xl font-black bg-emerald-50 px-3 py-1 rounded-xl">📌 Q</span>${qObj.q}
+                                        </h3>
+                                        <button onclick="toggleFavoritePage('${qObj.q}')" class="text-[2rem] md:text-3xl hover:scale-110 transition-transform shrink-0 mt-1 focus:outline-none drop-shadow-sm" title="移除最愛">
+                                            <i class="fa-solid fa-heart text-rose-500"></i>
+                                        </button>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5 text-xl md:text-2xl w-full font-medium text-left">
+                                        ${qObj.opts.map((opt, idx) => `
+                                            <div class="p-4 md:p-5 rounded-2xl break-words transition-all flex flex-col ${idx === qObj.ans ? 'bg-emerald-50 text-emerald-900 font-bold border-2 border-emerald-400 shadow-md ring-2 ring-emerald-400/20' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 md:w-10 font-bold ${idx === qObj.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === qObj.ans ? '<span class="ml-2 text-emerald-500 text-2xl">✅</span>' : ''}
+                                                </div>
+                                                ${(qObj.exps && qObj.exps[idx]) ? `<div class="mt-3 p-3 rounded-xl text-base md:text-lg border ${idx === qObj.ans ? 'border-emerald-200 bg-emerald-100/50 text-emerald-800' : 'border-slate-200 bg-white text-slate-600'} leading-relaxed font-medium"><span class="font-bold mr-2 ${idx === qObj.ans ? 'text-emerald-700' : 'text-slate-500'}">${idx === qObj.ans ? '🎯 解析：' : '💡 解析：'}</span>${qObj.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${qObj.generalExp ? `
+                                    <div class="mt-5 p-4 md:p-5 bg-emerald-50/80 border border-emerald-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <div class="absolute left-0 top-0 bottom-0 w-2 bg-emerald-400"></div>
+                                        <p class="text-lg md:text-xl leading-loose break-words whitespace-pre-wrap pl-3 font-bold text-emerald-900">${qObj.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                                `;
+                            }).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.toggleFavoritePage = (qText) => {
+            if (!userData.favorites) return;
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) {
+                if(confirm('確定要從最愛中移除此題嗎？')) {
+                    userData.favorites.splice(idx, 1);
+                    saveUserDataToCloud();
+                    renderFavorites();
+                }
+            }
+        };
+
+        window.renderHistory = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if((!userData.quizHistory || userData.quizHistory.length === 0) && (!userData.loginHistory || userData.loginHistory.length === 0)) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-emerald-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-slate-50 rounded-full flex items-center justify-center mb-8 shadow-inner border-4 border-slate-200 text-7xl">📜</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-emerald-950 mb-4">暫無紀錄</h2>
+                        <p class="text-2xl md:text-3xl font-medium text-emerald-800/60 mb-10">您還沒有完成任何測驗或留下足跡喔！</p>
+                        <button onclick="switchTab('quiz')" class="bg-white border-4 border-emerald-200 text-emerald-600 hover:bg-emerald-50 font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-amber-300 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-amber-800 flex items-center"><span class="bg-amber-100 text-amber-600 w-14 h-14 flex items-center justify-center rounded-2xl mr-5 shadow-sm">📜</span>作答與登入紀錄</h2>
+                                <p class="text-amber-900/60 mt-3 ml-20 font-bold text-lg md:text-xl">追蹤您的學習軌跡，跨裝置同步更新 ☁️</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                            <!-- 作答紀錄 -->
+                            <div class="bg-white rounded-3xl shadow-xl border border-amber-100 overflow-hidden">
+                                <div class="bg-amber-50 p-6 border-b border-amber-200">
+                                    <h3 class="text-3xl font-bold text-amber-900 flex items-center"><span class="mr-3 text-3xl">🎯</span>最近作答成績</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-5 max-h-[60vh] overflow-y-auto">
+                                    ${(userData.quizHistory || []).slice().reverse().map((h, i) => `
+                                        <div class="flex justify-between items-center p-5 rounded-2xl border-2 border-slate-100 ${h.score >= 80 ? 'bg-emerald-50/50 border-emerald-100' : (h.score < 60 ? 'bg-rose-50/50 border-rose-100' : 'bg-slate-50')} transition-all hover:shadow-md">
+                                            <div>
+                                                <div class="font-bold text-slate-800 text-xl md:text-2xl">${h.date}</div>
+                                                <div class="text-lg text-slate-500 mt-2 font-medium">共 ${h.total} 題，答對 <span class="font-bold text-slate-700">${h.correct}</span> 題</div>
+                                            </div>
+                                            <div class="text-5xl font-black ${h.score >= 80 ? 'text-emerald-600' : (h.score < 60 ? 'text-rose-500' : 'text-amber-500')}">${h.score}<span class="text-2xl ml-1 font-bold">分</span></div>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-slate-400 text-center py-10 font-bold">目前還沒有測驗紀錄喔</p>'}
+                                </div>
+                            </div>
+
+                            <!-- 登入紀錄 -->
+                            <div class="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden h-fit">
+                                <div class="bg-slate-50 p-6 border-b border-slate-200">
+                                    <h3 class="text-3xl font-bold text-slate-800 flex items-center"><span class="mr-3 text-3xl">👣</span>最近登入足跡</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-4 max-h-[40vh] overflow-y-auto">
+                                    ${(userData.loginHistory || []).slice().reverse().map((time, i) => `
+                                        <div class="flex items-center p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-100 transition-colors">
+                                            <span class="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 mr-4 text-lg font-bold shadow-inner">${i+1}</span>
+                                            <span class="font-bold text-slate-700 text-xl">${new Date(time).toLocaleString()}</span>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-slate-400 text-center py-10 font-bold">無登入紀錄</p>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        initApp();
+
+    </script>
+</body>
+</html>
