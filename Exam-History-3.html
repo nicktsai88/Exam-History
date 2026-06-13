@@ -1,0 +1,2398 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>單元3 清帝國時期的台灣 - 互動學習系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; color: #431407; font-size: 1.125rem; line-height: 1.8; -webkit-tap-highlight-color: transparent; }
+        
+        /* 可愛點陣背景 (雙色交錯：粉藍與粉紅) */
+        .dotted-bg {
+            background-color: #ffffff;
+            background-image: 
+                radial-gradient(circle, #93c5fd 2px, transparent 2px), /* 粉藍色點點 */
+                radial-gradient(circle, #f9a8d4 2px, transparent 2px); /* 粉紅色點點 */
+            background-size: 30px 30px;
+            background-position: 0 0, 15px 15px;
+        }
+
+        /* 滾動條美化 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #fbcfe8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #f9a8d4; }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-loading { background-color: #fbbf24; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; box-shadow: 0 0 8px #fbbf24; }
+        .status-success { background-color: #34d399; box-shadow: 0 0 8px #34d399; }
+        .status-error { background-color: #f87171; box-shadow: 0 0 8px #f87171; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        .knowledge-table { width: 100%; text-align: left; border-collapse: collapse; margin-top: 1rem; margin-bottom: 1rem; font-size: 0.9rem; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .knowledge-table th, .knowledge-table td { border: 1px solid #fed7aa; padding: 0.75rem; }
+        .knowledge-table th { background-color: #ffedd5; color: #9a3412; font-weight: bold; text-align: center; }
+        .knowledge-table tr:nth-child(even) { background-color: #fffbeb; }
+        .knowledge-table tr:hover { background-color: #ffedd5; transition: background-color 0.2s; }
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col overflow-hidden dotted-bg">
+
+    <div id="app" class="w-full h-full flex flex-col overflow-hidden"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAxQFt76ZPXE7d0i1XeNZ1yiiD2WYNIfHs", 
+            authDomain: "chinese-learning-47f4d.firebaseapp.com",
+            projectId: "chinese-learning-47f4d",
+            storageBucket: "chinese-learning-47f4d.firebasestorage.app",
+            messagingSenderId: "76289812052",
+            appId: "1:76289812052:web:898384a916f9f341f62fc1"
+        };
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'idiom-app-default';
+        const COLLECTION_NAME = 'Exam-History-3'; 
+        const DOC_GLOBAL = 'Global_Users';      
+        
+        let app, auth, db;
+        let isFirebaseInitialized = false;
+        let currentUser = null;
+        let username = '';
+        let userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+        let connectionStatus = 'loading';
+        let recentUsers = [];
+        let unsubscribeUser = null;
+        let unsubscribeGlobal = null;
+        
+        let audioCtx = null;
+        const initAudio = () => {
+            if (!audioCtx) {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioCtx = new AudioContext();
+                } catch(e) { console.warn("AudioContext not supported"); }
+            }
+        };
+        const playTone = (freq, type, duration) => {
+            initAudio();
+            if(!audioCtx) return;
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                oscillator.type = type;
+                oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        };
+        const playCorrectSound = () => { playTone(523.25, 'sine', 0.1); setTimeout(() => playTone(659.25, 'sine', 0.2), 100); };
+        const playWrongSound = () => { playTone(300, 'sawtooth', 0.2); setTimeout(() => playTone(200, 'sawtooth', 0.3), 150); };
+
+        try {
+            const actualConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+            if (actualConfig.apiKey && actualConfig.apiKey !== "填入key" && actualConfig.apiKey !== "YOUR_API_KEY") {
+                app = initializeApp(actualConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                isFirebaseInitialized = true;
+                connectionStatus = 'success';
+            } else { connectionStatus = 'error'; }
+        } catch (error) { connectionStatus = 'error'; }
+
+        const initAuth = async () => {
+            if (!isFirebaseInitialized) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+            } catch (error) { connectionStatus = 'error'; }
+        };
+
+        const learnData = [
+            {
+                id: 'sec1', title: '一、治臺政策的轉變 📜', theme: 'orange',
+                content: `
+                <div class="space-y-4 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-orange-50 to-amber-50 p-5 md:p-6 rounded-3xl border-l-8 border-orange-500 shadow-lg">
+                        <div class="text-center font-black text-2xl md:text-3xl text-orange-950 mb-4 border-b-2 border-orange-200 pb-3 flex justify-center items-center gap-3">
+                            <span class="text-3xl">📜</span> 清初消極與晚期積極政策 <span class="text-3xl">⚓</span>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-orange-100 mb-4">
+                            <h3 class="font-bold text-xl md:text-2xl text-orange-800 mb-3 flex items-center"><span class="bg-orange-200 p-1.5 rounded-lg mr-2 shadow-sm">一</span> 早期：消極防範 (防臺而治臺)</h3>
+                            <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-relaxed">
+                                <li class="bg-white p-3 rounded-xl shadow-sm border border-orange-100">
+                                    <span class="text-orange-700 font-black">🚫 渡臺禁令：</span>為防臺灣再成反清基地，嚴格限制漢人來臺。規定須申請照單，且<span class="text-rose-600 font-bold">禁止攜帶家眷</span>，導致早期男女比例失衡，產生「羅漢腳」，成為械鬥民變隱憂。
+                                </li>
+                                <li class="bg-white p-3 rounded-xl shadow-sm border border-orange-100">
+                                    <span class="text-orange-700 font-black">⛰️ 劃界封山：</span>為避免漢人侵墾原住民土地，設立「<span class="text-blue-600 font-bold">土牛溝</span>」等番界，嚴禁漢人越界。
+                                </li>
+                                <li class="bg-white p-3 rounded-xl shadow-sm border border-orange-100">
+                                    <span class="text-orange-700 font-black">🗺️ 行政區劃：</span>初期僅設「一府三縣」，集中在<span class="text-emerald-600 font-bold">臺灣西部</span>。隨開墾向北向東推移，增設彰化縣、淡水廳、噶瑪蘭廳（嘉慶年間）。
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-orange-100 mb-4">
+                            <h3 class="font-bold text-xl md:text-2xl text-orange-800 mb-3 flex items-center"><span class="bg-orange-200 p-1.5 rounded-lg mr-2 shadow-sm">二</span> 晚期：積極建設 (建省與近代化)</h3>
+                            <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-relaxed">
+                                <li class="bg-white p-3 rounded-xl shadow-sm border border-orange-100">
+                                    <span class="text-orange-700 font-black">⚔️ 沈葆楨 (牡丹社事件)：</span>因日本犯臺，體認海防地位。廢除渡臺禁令與封山，推行「開山撫番」，修砲臺（億載金城）、打通東部道路（八通關古道）。
+                                </li>
+                                <li class="bg-white p-3 rounded-xl shadow-sm border border-orange-100">
+                                    <span class="text-orange-700 font-black">🚂 劉銘傳 (清法戰爭)：</span>戰後1885年臺灣建省。積極近代化建設：修築<span class="text-emerald-600 font-bold">鐵路</span>（基隆至新竹）、架設電報、設郵政總局等。
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec2', title: '二、社會動盪與民間組織 ⚔️', theme: 'teal',
+                content: `
+                <div class="space-y-4 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-teal-50 to-emerald-50 p-5 md:p-6 rounded-3xl border-l-8 border-teal-500 shadow-lg">
+                        <div class="mb-3">
+                            <h3 class="font-bold text-xl md:text-2xl text-teal-800 mb-3 flex items-center"><span class="bg-teal-200 p-1.5 rounded-lg mr-2 shadow-sm">一</span> 三年一小反，五年一大亂</h3>
+                            <div class="bg-teal-100/50 p-4 rounded-2xl border border-teal-200 mb-5">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-relaxed">
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black">🔥 民變 (官逼民反)：</span>官員貪汙引發反抗。如：朱一貴事件、<span class="text-rose-600 font-bold">林爽文事件</span>（清代最大）、戴潮春事件。
+                                    </li>
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black">⚔️ 械鬥：</span>移民為爭奪<span class="text-amber-600 font-bold">土地、水源</span>，常以祖籍（漳泉）或姓氏結黨鬥毆。為防禦而建「隘門」。
+                                    </li>
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black">👻 有應公廟：</span>收埋因動亂死去的無主孤魂（羅漢腳），反映社會動盪。
+                                    </li>
+                                </ul>
+                            </div>
+                            
+                            <h3 class="font-bold text-xl md:text-2xl text-teal-800 mb-3 flex items-center"><span class="bg-teal-200 p-1.5 rounded-lg mr-2 shadow-sm">二</span> 宗族與信仰凝聚</h3>
+                            <div class="bg-teal-100/50 p-4 rounded-2xl border border-teal-200">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-relaxed">
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black">👥 宗族組織：</span>初期多單身，合組「<span class="text-emerald-600 font-bold">唐山祖</span>」(同姓即可)；後期繁衍後，發展出祭祀實際來臺祖先的「<span class="text-blue-600 font-bold">開臺祖</span>」(具血緣)。
+                                    </li>
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black">🙏 原鄉信仰：</span>泉州人拜保生大帝；漳州拜開漳聖王；客家人拜<span class="text-rose-600 font-bold">三山國王</span>。媽祖與土地公則為共同信仰。
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec3', title: '三、經濟發展與文教 🌾', theme: 'purple',
+                content: `
+                <div class="space-y-4 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-purple-50 to-fuchsia-50 p-5 md:p-6 rounded-3xl border-l-8 border-purple-500 shadow-lg">
+                        <div class="mb-3">
+                            <h3 class="font-bold text-xl md:text-2xl text-purple-800 mb-3 flex items-center"><span class="bg-purple-200 p-1.5 rounded-lg mr-2 shadow-sm">一</span> 拓墾與水利工程 💧</h3>
+                            <div class="bg-white p-3 rounded-xl shadow-sm border border-purple-100 mb-4 text-base md:text-lg text-slate-700">
+                                <p><span class="text-purple-700 font-bold">合資開墾：</span>如閩客合作的「<span class="text-rose-600 font-bold">金廣福墾號</span>」。</p>
+                                <p class="mt-2"><span class="text-purple-700 font-bold">三大水圳：</span>北<span class="text-blue-600 font-bold">瑠公圳</span>、中<span class="text-blue-600 font-bold">八堡圳</span>(施世榜)、南<span class="text-blue-600 font-bold">曹公圳</span>，擴大灌溉面積。</p>
+                            </div>
+                            
+                            <h3 class="font-bold text-xl md:text-2xl text-purple-800 mb-3 flex items-center"><span class="bg-purple-200 p-1.5 rounded-lg mr-2 shadow-sm">二</span> 兩岸貿易與開港通商 🚢</h3>
+                            <div class="bg-purple-100/50 p-4 rounded-2xl border border-purple-200 mb-4">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-relaxed">
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black">📦 「郊」的出現 (前期)：</span>從事兩岸貿易的商人公會(如北郊、南郊)。出口<span class="text-amber-600 font-bold">稻米、蔗糖</span>，造就一府二鹿三艋舺。
+                                    </li>
+                                    <li class="bg-white p-3 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black">🌍 開港通商 (後期)：</span>英法聯軍後開放安平、打狗、淡水、雞籠。外銷主力變為<span class="text-emerald-600 font-bold">茶葉、樟腦、蔗糖</span>，經濟重心北移，轉為「<span class="text-blue-600 font-bold">出超</span>」。洋行與西方傳教士(馬偕、馬雅各)來臺。
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            }
+        ];
+
+        const generate120Questions = () => {
+            const qList = [];
+            const addQ = (q, opts, ans, exps, generalExp = "") => qList.push({ q, opts, ans, exps, generalExp, showExplanation: false, selectedAns: null, isCorrect: false });
+            
+            addQ("<img src='Exam-History-3/p1.jpg' alt='第1題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>1. 附圖是課本上的參考地圖(標示：機器採煤、建新式炮臺、廢除大陸人民渡臺禁令、打通山路等),這張圖最可能是說明下列何人的政績?", 
+                ["鄭成功", "沈葆楨", "丁日昌", "劉銘傳"], 
+                1, 
+                ["(A) 錯誤。鄭成功時期並無機器採煤與廢除清朝渡臺禁令之事。", 
+                 "(B) 正確。圖中顯示的「建新式炮臺(億載金城)」、「廢除渡臺禁令」、「打通山路(八通關古道)」等，皆為牡丹社事件後，清廷派「沈葆楨」來臺推行「開山撫番」與積極建設的重大政績。", 
+                 "(C) 錯誤。丁日昌主要是延續沈葆楨的政策，並建立電報線。", 
+                 "(D) 錯誤。劉銘傳的代表性建設是鐵路與建省。"], 
+                "看到「廢除渡臺禁令」與「開山(打通山路)撫番」，第一直覺就要想到牡丹社事件後的沈葆楨。");
+
+            addQ("2. 小天到高雄西子灣旅遊,他發現西子灣除了擁有山海美景外,並有一座「打狗英國領事館」的建築物。此一領事館的興建,是因為19世紀中葉,清帝國在哪一場戰爭失敗後才出現的?", 
+                ["鴉片戰爭", "英法聯軍", "清法戰爭", "甲午戰爭"], 
+                1, 
+                ["(A) 錯誤。鴉片戰爭開放的是廣州、上海等五口通商，不含臺灣。", 
+                 "(B) 正確。1858年「英法聯軍」之役清廷戰敗，被迫開放臺灣的安平、打狗(高雄)、淡水、雞籠等港口，外國人因此得以來臺設立領事館與洋行。", 
+                 "(C) 錯誤。清法戰爭後臺灣建省。", 
+                 "(D) 錯誤。甲午戰爭後臺灣割讓給日本。"], 
+                "臺灣被強迫「開港通商」(洋行、領事館進駐)的歷史轉折點，就是因為清廷打輸了「英法聯軍」。");
+
+            addQ("<img src='Exam-History-3/p3.jpg' alt='第3題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>3. 附圖為清代官員與人民的對話(官員：為防止臺灣再度成為動亂之源,須先申請證照,而且不准攜帶家眷)。依據對話內容可知,這與清廷頒布哪一政策有關?", 
+                ["鎖國政策", "劃界封山", "海禁政策", "渡臺禁令"], 
+                3, 
+                ["(A) 錯誤。鎖國政策是日本江戶幕府的作法。", 
+                 "(B) 錯誤。劃界封山是為了隔離漢人與原住民，禁止入山開墾。", 
+                 "(C) 錯誤。海禁政策是明朝至清初禁止民間私人出海貿易的規定。", 
+                 "(D) 正確。清廷平定臺灣後，為了防止臺灣再次成為反清基地的動亂之源，嚴格限制大陸人民來臺，頒布了「不准攜帶家眷」的「渡臺禁令」。"], 
+                "「禁止攜帶家眷」是清初「渡臺禁令」最嚴苛的規定，也因此造成了臺灣早期羅漢腳充斥的社會問題。");
+
+            addQ("4. 琉球因與臺灣的地理位置接近,彼此時有互動。1870年代,琉球王國居民因船難漂流至臺灣,不幸被殺害,日本藉機出兵臺灣,形成國際外交事件,導致清帝國對臺治理政策有下列哪一轉變?", 
+                ["劃定「番界」,隔離漢人與原住民", "開放港口通商,允許洋行建立據點", "積極治理臺灣,開山撫番鼓勵墾殖", "設置對渡口岸,在指定的港口貿易"], 
+                2, 
+                ["(A) 錯誤。這是清初消極治臺時期的作法。", 
+                 "(B) 錯誤。這是英法聯軍戰敗後的結果。", 
+                 "(C) 正確。題幹描述的是1874年的「牡丹社事件」。此事件使清廷體認到臺灣海防重要性，因而派沈葆楨來臺，將治臺態度轉為積極，廢除禁令並推行「開山撫番」。", 
+                 "(D) 錯誤。這是清初限制貿易的作法。"], 
+                "牡丹社事件是清朝治臺態度的「分水嶺」：從此由消極限制走向積極開發(開山撫番)。");
+
+            addQ("5. 清末劉銘傳來臺加強海防、增設炮臺、增設臺東直隸州、修築鐵路、架設電報系統,加速了臺灣的發展。使劉銘傳積極對臺建設的直接原因為何?", 
+                ["漢人與原住民發生衝突", "地方械鬥在臺日益嚴重", "日本出兵侵犯臺灣", "法國企圖進佔臺灣"], 
+                3, 
+                ["(A) 錯誤。這不是促成劉銘傳建設的主因。", 
+                 "(B) 錯誤。械鬥問題並非推動近代化建設的主因。", 
+                 "(C) 錯誤。日本出兵(牡丹社事件)促成的是沈葆楨來臺。", 
+                 "(D) 正確。1884年爆發「清法戰爭」，法國攻打基隆、淡水。劉銘傳奉命來臺督戰，戰後清廷體認臺灣地位重要，於1885年宣布建省，命其為首任巡撫進行現代化建設。"], 
+                "清末兩大推手與對應戰爭：沈葆楨(牡丹社事件/日本)、劉銘傳(清法戰爭/法國)。");
+
+            addQ("6. 鄭克塽降清後,朝廷中有兩派人馬爭論不休,其中一派主張放棄臺灣,另一派則認為應該要保留臺灣,令當時的統治者大為困擾。上述持留臺論者,其主要理由為何?", 
+                ["保留臺灣不會增加國家財政的負擔", "臺灣為未開發的彈丸小島,應積極派人拓墾", "臺灣人口眾多,土地已開墾完畢", "臺灣土地肥沃且物產豐富,戰略價值高"], 
+                3, 
+                ["(A) 錯誤。當時棄臺派就是認為留著臺灣會浪費軍餉。", 
+                 "(B) 錯誤。留臺派不認為臺灣只是無用的彈丸小島。", 
+                 "(C) 錯誤。當時臺灣仍有大量未開發荒地。", 
+                 "(D) 正確。清將施琅上奏，強調臺灣「土地肥沃、物產豐富」，且位處東南沿海具「戰略價值」，若放棄將威脅大清安全，最終成功說服康熙皇帝。"], 
+                "施琅力主留臺的兩大關鍵：物產豐饒、國防戰略地位重要。");
+
+            addQ("7. 豪豪跟著爸媽一同到臺中遊玩,發現一個很特別的地名,叫做「土牛」。豪豪好奇的問爸爸這個地名是什麼意思,爸爸應該要如何回答?", 
+                ["這是原住民居住的部落名稱", "這裡以前是殺牛的屠宰場", "這裡以前設有隔離漢人與原住民的界線", "這裡的山遠遠看過去就像一頭牛一樣"], 
+                2, 
+                ["(A) 錯誤。這不是原住民部落名。", 
+                 "(B) 錯誤。與屠宰場無關。", 
+                 "(C) 正確。清初實施「劃界封山」政策，為防漢人越界侵墾，官府在邊界挖掘壕溝，挖出的土堆砌在旁形似牛背，被稱為「土牛溝」，是隔離原漢的界線。", 
+                 "(D) 錯誤。與山形無關。"], 
+                "「土牛」＝清代原漢隔離政策(劃界封山)所留下的歷史地名。");
+
+            addQ("<img src='Exam-History-3/p8.jpg' alt='第8題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>8. 歷史老師用附圖投影片講解臺灣某個時期的交通建設,依圖中內容判斷,這應是指下列哪一時期?", 
+                ["荷蘭統治時期", "鄭氏統治時期", "清帝國統治時期", "日本統治時期"], 
+                2, 
+                ["(A) 錯誤。荷治時期無火車。", 
+                 "(B) 錯誤。鄭氏時期無火車。", 
+                 "(C) 正確。圖中展示了「獅球嶺隧道」與「基隆至新竹的鐵路」，正是清法戰爭後，首任臺灣巡撫劉銘傳在「清帝國統治時期」晚期所推動的著名現代化建設。", 
+                 "(D) 錯誤。日治時期雖延伸鐵路，但基隆到新竹段是清代基礎。"], 
+                "看到「獅球嶺隧道」與「基隆到新竹的鐵路」，代表清朝晚期劉銘傳的政績。");
+
+            addQ("<img src='Exam-History-3/p9.jpg' alt='第9題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>9. 婷婷在書上看到一則與臺灣歷史有關的插畫,如附圖(限制漢人來臺、禁止攜眷、申請照單、禁止入山),插畫中是描述臺灣哪一時期的情形?", 
+                ["荷蘭統治時期", "清帝國早期", "清帝國晚期", "日本統治時期"], 
+                1, 
+                ["(A) 錯誤。荷蘭人鼓勵漢人來臺。", 
+                 "(B) 正確。插畫中描述的禁止攜眷、渡臺證照、禁止入山開墾(劃界封山)等，全是「清帝國早期」為了防範臺灣生亂採取的消極治臺政策。", 
+                 "(C) 錯誤。清代晚期沈葆楨已廢除這些禁令。", 
+                 "(D) 錯誤。日治時期無此禁令。"], 
+                "清初消極法寶：「渡臺禁令」(不准帶家眷)與「劃界封山」(不准進山)。");
+
+            addQ("10. 清帝國統治初期,臺灣社會曾出現許多無妻子兒女、無田地房產而常群聚械鬥、無所不為的遊民,是造成當時社會不安與暴力衝突的原因之一。這種現象的產生,主要與清廷推行下列哪一項措施有關?", 
+                ["派員清查土地人口", "任命長老治理原住民", "限制特定漢人渡海來臺", "禁止漢人與原住民來往"], 
+                2, 
+                ["(A) 錯誤。與遊民產生無關。", 
+                 "(B) 錯誤。這是荷蘭人制度。", 
+                 "(C) 正確。清初頒布「渡臺禁令」規定禁止攜帶家眷，導致來臺者皆為單身男性。這些被稱為「羅漢腳」的男子，成為社會械鬥的主要亂源。", 
+                 "(D) 錯誤。與羅漢腳產生無直接因果關係。"], 
+                "社會亂源「羅漢腳」的製造機：清初禁止攜帶家眷的渡臺禁令。");
+
+            addQ("11. 清帝國統治臺灣初期,對於人民渡海來臺曾頒布相關禁令:禁止無照渡臺,且有照者亦不得攜帶家眷。在來臺者多為男性的情況下,使得臺灣社會漢人男女人口比例嚴重失衡。當時清廷頒行前述禁令最主要的原因為何?", 
+                ["限制移民開墾,防止漢人叛亂", "臺灣地理條件差,不適宜居住", "倡導族群融合,鼓勵漢人與原住民通婚", "重男輕女觀念盛行,不許婦女參與墾殖"], 
+                0, 
+                ["(A) 正確。清廷平定臺灣後，深怕臺灣若任由漢人大量移入並站穩腳跟，會再次成為反叛基地，因此制定禁令「防止漢人叛亂」。", 
+                 "(B) 錯誤。臺灣物產豐富，非不適宜居住。", 
+                 "(C) 錯誤。清廷並未倡導與原住民通婚。", 
+                 "(D) 錯誤。不准帶家眷是政治防範，非單純重男輕女。"], 
+                "清廷初期的「防臺而治臺」心態：把臺灣當成潛在反叛基地，處處防範漢人。");
+
+            addQ("12. 阿隆與小瑩討論某一段臺灣歷史 阿隆:「此事的起因是這個國家以人民被臺灣原住民殺害為藉口,派兵攻打臺灣。」小瑩:「清廷最大失策是承認這個國家的出兵行為是『保民義舉』。」他們是討論下列何者?", 
+                ["清法戰爭", "甲午戰爭", "郭懷一事件", "牡丹社事件"], 
+                3, 
+                ["(A) 錯誤。清法起因為越南。", 
+                 "(B) 錯誤。甲午起因為朝鮮。", 
+                 "(C) 錯誤。郭懷一是反荷。", 
+                 "(D) 正確。1871年琉球居民遇船難遭原住民殺害。1874年日本藉機出兵爆發「牡丹社事件」。事後清廷承認其為「保民義舉」，等於間接承認琉球為日本屬地。"], 
+                "「琉球人遇害」、「日本出兵」、「保民義舉」＝ 牡丹社事件。");
+
+            addQ("<img src='Exam-History-3/p13.jpg' alt='第13題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>13. 附圖是小莞在書上看到的一幅圖(標示建新式炮臺、廢除渡臺禁令、打通山路等)。這幅圖最可能是說明下列何人的政績?", 
+                ["鄭經", "施琅", "沈葆楨", "劉銘傳"], 
+                2, 
+                ["(A) 錯誤。年代不符。", 
+                 "(B) 錯誤。施琅主要事蹟為攻臺與建議留臺。", 
+                 "(C) 正確。修建新式炮臺(億載金城)、廢除清初禁令、打通後山道路(八通關古道)，全都是「沈葆楨」因牡丹社事件來臺後，推行「開山撫番」的政績。", 
+                 "(D) 錯誤。劉銘傳代表作為建省與鐵路。"], 
+                "牡丹社事件的救火隊長：沈葆楨。任務是解除舊禁令，開山撫番建砲台。");
+
+            addQ("14. 義德利用假期到屏東海洋生物博物館遊玩,看到博物館旁刻有「明治七年討蕃軍本營地」的石碑,又看到「大日本琉球藩民五十四名墓」,這二者與哪一歷史事件有關?", 
+                ["牡丹社事件", "朱一貴事件", "林爽文事件", "戴潮春事件"], 
+                0, 
+                ["(A) 正確。「討蕃軍(日軍打原住民)」與「琉球藩民墓」，見證了1874年日本藉口琉球船難出兵臺灣南部的「牡丹社事件」。", 
+                 "(B) 錯誤。朱一貴事件是清代民變。", 
+                 "(C) 錯誤。林爽文事件是清代民變。", 
+                 "(D) 錯誤。戴潮春事件是清代民變。"], 
+                "看到「琉球藩民墓」與屏東(南部)，就是牡丹社事件的發生地。");
+
+            addQ("<img src='Exam-History-3/p15.jpg' alt='第15題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>15. 附圖是日本曾經在臺灣發布的公告(內容：大日本陸軍...幾年前你們殺害我國人民...與清國講和...),此公告應與下列何者關係最密切?", 
+                ["朱一貴事件的平定", "聯合東印度公司的成立", "牡丹社事件的發生", "英法聯軍之役的影響"], 
+                2, 
+                ["(A) 錯誤。朱一貴事件與日本無關。", 
+                 "(B) 錯誤。與荷蘭無關。", 
+                 "(C) 正確。公告提到「大日本陸軍」、「殺害我國人民(琉球人)」、「與清國講和」，這完全是「牡丹社事件」結束後日軍發布的告示。", 
+                 "(D) 錯誤。英法聯軍與日本無關。"], 
+                "清代的臺灣出現「日本陸軍」，唯一劇本就是牡丹社事件。");
+
+            addQ("16. 沈葆楨曾上奏朝廷,指出為了防範列強的野心,亟需開墾臺灣山地,請求朝廷廢除渡臺等禁令。沈葆楨來臺開墾建設,與下列何者關係密切?", 
+                ["林爽文率眾反清", "鄭成功佔領臺灣", "臺灣被迫開港通商", "牡丹社事件發生"], 
+                3, 
+                ["(A) 錯誤。林爽文事件早於沈葆楨。", 
+                 "(B) 錯誤。年代不符。", 
+                 "(C) 錯誤。開港通商是英法聯軍結果。", 
+                 "(D) 正確。1874年日本發動「牡丹社事件」侵臺。清廷驚覺海防空虛，派遣沈葆楨來臺加強防務，並推動廢除禁令、開山撫番等建設。"], 
+                "因果連線：牡丹社事件(日本) ➜ 派沈葆楨來臺 ➜ 廢除禁令、開山撫番。");
+
+            addQ("17. 安安要以郭懷一、朱一貴、林爽文等人為對象寫一篇報告,這份報告最可能在探討下列哪一主題?", 
+                ["科舉選才的機會不均", "民間百姓的反抗事件", "行會組織的貿易衝突", "地方官紳的改革運動"], 
+                1, 
+                ["(A) 錯誤。與科舉無關。", 
+                 "(B) 正確。郭懷一是反荷領袖；朱一貴與林爽文則是清代因官員貪腐而率眾反抗的「民變」領袖。三者皆為「民間百姓的反抗事件」。", 
+                 "(C) 錯誤。貿易衝突指郊商械鬥。", 
+                 "(D) 錯誤。他們是武裝反叛者，非體制內改革。"], 
+                "臺灣史三大反叛王：郭懷一(反荷)、朱一貴(民變)、林爽文(清代最大民變)。");
+
+            addQ("18. 清帝國統治時代後期,沈葆楨在臺灣積極修建炮臺,其最主要的目的為何?", 
+                ["防止群眾叛亂", "抵禦外來侵略", "展示雄厚國力", "對外爭奪資源"], 
+                1, 
+                ["(A) 錯誤。防叛亂主要靠駐軍，炮臺對海。", 
+                 "(B) 正確。沈葆楨在日本發動牡丹社事件侵臺後來臺，修建西式炮臺(億載金城)最主要目的是加強海防，以「抵禦外來侵略」。", 
+                 "(C) 錯誤。清末主要是防禦非展示。", 
+                 "(D) 錯誤。是被動防守非爭奪。"], 
+                "億載金城(新式炮臺)誕生背景，就是為了防範牡丹社事件那樣的外敵入侵。");
+
+            addQ("19. 清廷征服臺灣後,官員對於棄留臺灣問題爭論不一,當時率軍攻取臺灣的大臣上奏康熙皇帝,強調臺灣物產豐富,且位於重要戰略位置,雖管理不易,不可輕言放棄,結果促使朝廷將臺灣納入版圖。這位大臣是誰?", 
+                ["施琅", "沈有容", "沈葆楨", "劉銘傳"], 
+                0, 
+                ["(A) 正確。率清軍攻取臺灣的大臣是「施琅」。他上奏《恭陳臺灣棄留疏》，力陳臺灣戰略與經濟價值，成功說服康熙將臺灣納入版圖。", 
+                 "(B) 錯誤。沈有容是明朝將領。", 
+                 "(C) 錯誤。沈葆楨是晚清官員。", 
+                 "(D) 錯誤。劉銘傳是晚清官員。"], 
+                "打下臺灣並堅持留住臺灣的清朝大將，就是施琅。");
+
+            addQ("20. 紹倫在書上看見一段描述:「1884年4月,外國軍艦駛向基隆,清廷相當重視此事,派劉銘傳來臺督辦軍務。8月外軍開始攻擊,雙方開戰………………10月又分兵攻打淡水,彼此交戰不休………………此後清廷更加注意臺灣的地位。」這應是描寫下列哪一場戰爭?", 
+                ["英法聯軍之役", "清法戰爭", "甲午戰爭", "八國聯軍"], 
+                1, 
+                ["(A) 錯誤。英法聯軍導致臺灣開港。", 
+                 "(B) 正確。時間「1884年」、外軍攻「基隆/淡水」、清廷派「劉銘傳」督戰，完全吻合「清法戰爭」。此戰後臺灣建省。", 
+                 "(C) 錯誤。甲午戰爭對手是日本。", 
+                 "(D) 錯誤。八國聯軍主要在中國北方。"], 
+                "1884 + 劉銘傳 + 攻基隆/淡水 ＝ 清法戰爭。");
+
+            addQ("21. 臺灣為移民社會,早期由於政治、軍紀不良及社會不安,時常會出現武力的衝突,若以清帝國時期「朱一貴事件」和「林爽文事件」為例,他們的衝突是屬於下列何種性質?", 
+                ["官逼民反", "軍人叛變", "宗教衝突", "地方械鬥"], 
+                0, 
+                ["(A) 正確。朱一貴與林爽文事件皆因清朝地方官員貪汙腐敗，導致百姓忍無可忍反抗政府的起義，屬於「官逼民反」的民變。", 
+                 "(B) 錯誤。他們是平民領袖。", 
+                 "(C) 錯誤。與宗教衝突無關。", 
+                 "(D) 錯誤。地方械鬥是指平民群體之間的私鬥，對象不是政府。"], 
+                "打政府的叫「民變」(官逼民反)；打別的移民群體的叫「械鬥」。");
+
+            addQ("<img src='Exam-History-3/p22.jpg' alt='第22題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>22. 附圖標示某時期統治者在臺灣島上設置的行政中心及軍事據點,顯示當時官方實際統治的區域。根據圖中行政中心及軍事據點的分布判斷,最可能是下列何時的情況?", 
+                ["十七世紀西班牙治臺期間", "十八世紀清帝國統治之時", "二十世紀日本殖民統治時", "二十世紀國民政府遷臺後"], 
+                1, 
+                ["(A) 錯誤。西班牙只佔領北臺灣。", 
+                 "(B) 正確。地圖顯示行政中心全密集於「西半部」，東半部完全空白。這反映了「十八世紀清帝國」實施「劃界封山」政策時，官方統治力量未進入東部的疆域特徵。", 
+                 "(C) 錯誤。日本統治時期行政區已涵蓋全島。", 
+                 "(D) 錯誤。國民政府統治範圍為全島。"], 
+                "地圖只畫西半部，東半部放空的，是清朝前期「劃界封山」的臺灣版圖。");
+
+            addQ("23. 清廷經營臺灣,由南而北、由西而東,陸續設置地方行政單位。根據這個發展的次序,下列哪一個行政區是最晚設立的?", 
+                ["淡水廳", "彰化縣", "諸羅縣", "噶瑪蘭廳"], 
+                3, 
+                ["(A) 錯誤。淡水廳設於雍正元年。", 
+                 "(B) 錯誤。彰化縣設於雍正元年。", 
+                 "(C) 錯誤。諸羅縣設於康熙年間(最早一府三縣)。", 
+                 "(D) 正確。漢人向東部開發最晚。直到「嘉慶」年間，因吳沙開墾及防範海盜，清廷才將宜蘭納入版圖，設立「噶瑪蘭廳」，為選項中最晚。"], 
+                "行政區增設口訣：康熙(南) -> 雍正(中北) -> 嘉慶(東部噶瑪蘭)。");
+
+            addQ("24. 十七世紀時,在臺灣的歐洲傳教士,以羅馬字拼寫原住民語的方式傳教,但隨著政權轉變,傳教事業逐漸式微。後來,因為某一「史事」的發生,傳教士獲得官方允許,又開始在臺灣傳教,也使用羅馬字拼寫本地語言,編寫傳教文書。此「史事」最可能是下列何者?", 
+                ["中英鴉片戰爭", "臺灣開港通商", "法國攻佔臺灣", "清廷將臺灣納入版圖"], 
+                1, 
+                ["(A) 錯誤。鴉片戰爭未開放臺灣港口。", 
+                 "(B) 正確。17世紀傳教士(荷蘭)式微後，直到1858年英法聯軍戰敗，臺灣被迫「開港通商」，條約明訂外國傳教士可自由傳教，長老教會才得以再次合法進入臺灣。", 
+                 "(C) 錯誤。與法國攻臺無關。", 
+                 "(D) 錯誤。清初並未開放外國人傳教。"], 
+                "西方傳教士(馬偕/馬雅各)能合法進入臺灣，全靠「開港通商」。");
+
+            addQ("<img src='Exam-History-3/p25.jpg' alt='第25題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>25. 小雅參觀文物展時,看到一塊解說牌,部分內容如附圖(1887年建設第一條官辦客運鐵路)。這段文字應是描述下列哪一位人物的建設成果?", 
+                ["鄭經", "鄭成功", "劉銘傳", "沈葆楨"], 
+                2, 
+                ["(A) 錯誤。鄭氏無鐵路。", 
+                 "(B) 錯誤。鄭氏無鐵路。", 
+                 "(C) 正確。清法戰爭後臺灣建省，首任巡撫「劉銘傳」推動近代化建設，於1887年興建基隆到新竹的鐵路，為中國第一條官方客運鐵路。", 
+                 "(D) 錯誤。沈葆楨重點是炮臺與開山道路。"], 
+                "臺灣鐵路之父＝首任臺灣巡撫劉銘傳。");
+
+            addQ("26. 清帝國早期,清廷對臺灣的漢移民和原住民的管理態度為何?", 
+                ["希望漢人與原住民和諧相處,故長期採取以漢人文化「教化」原住民的策略", "以立碑與劃界的方式,防止漢人侵墾原住民地區", "派遣高山族的勇士守住重要隘口,以免平埔族與漢人間發生衝突", "政府畫的「番界」以中央山脈為分界線,以東為「番人」之地,以西為漢人的生活區"], 
+                1, 
+                ["(A) 錯誤。清初採防範非同化。", 
+                 "(B) 正確。清廷為避免漢人侵佔原住民土地引發衝突，實施「劃界封山」，以立碑或挖溝(土牛溝)作為界線(番界)，嚴禁越界。", 
+                 "(C) 錯誤。未常態派高山族守隘口。", 
+                 "(D) 錯誤。番界並非單純以中央山脈為界，而是隨開墾推移。"], 
+                "清初處理原漢問題的最高原則就是「隔離不接觸」(劃界封山)。");
+
+            addQ("<img src='Exam-History-3/p27.jpg' alt='第27題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>27. 附圖為清帝國時期某人對臺灣的建設(標示：廢除渡臺禁令、新式炮臺、八通關等),根據內容判斷,清帝國推行這些建設與下列何者有關?", 
+                ["爆發民變事件", "爆發清法戰爭", "日本派兵侵犯臺灣", "海盜侵擾臺灣沿海"], 
+                2, 
+                ["(A) 錯誤。民變不會引發對海炮臺與廢除禁令。", 
+                 "(B) 錯誤。清法戰爭後是劉銘傳。", 
+                 "(C) 正確。圖中廢除禁令、建億載金城、開八通關皆為沈葆楨政績。其來臺主因是1874年「日本派兵侵犯臺灣」的牡丹社事件。", 
+                 "(D) 錯誤。海盜非主因。"], 
+                "八通關古道 + 億載金城 = 沈葆楨 = 牡丹社事件(防日本)。");
+
+            addQ("28. 根據清代科舉考試的規定,鄉試須到各省省會赴考;祖籍臺北府的秀才明馥,第一次赴福建的省會福州參加科考,不幸落榜,但他第二次則在家鄉應試。明馥第二次科考時的臺灣長官應是下列何者?", 
+                ["鄭成功", "沈葆楨", "丁日昌", "劉銘傳"], 
+                3, 
+                ["(A) 錯誤。非鄭氏時期。", 
+                 "(B) 錯誤。沈葆楨時臺灣仍隸屬福建省。", 
+                 "(C) 錯誤。丁日昌時臺灣仍隸屬福建省。", 
+                 "(D) 正確。第二次能在家鄉(臺北)應試，代表臺灣已升格建省，擁有自己的省會考場。臺灣建省後的首任巡撫即為「劉銘傳」。"], 
+                "不用再搭船去福建考試，代表臺灣已「升格當省」(劉銘傳時期)。");
+
+            addQ("29. 有關清廷頒布的「渡臺禁令」,下列敘述何者符合史實?", 
+                ["除配偶外,規定禁止攜帶男眷", "禁令執行常時寬時嚴,移民偷渡情形仍普遍", "渡臺證照規定結婚者才能來臺", "女子不需要申請渡臺證照,就可移民來臺"], 
+                1, 
+                ["(A) 錯誤。規定是禁止攜帶「家眷」(妻女)。", 
+                 "(B) 正確。雖然有渡臺禁令，但因大陸沿海謀生困難，且禁令執行「時寬時嚴」，漢人「偷渡」來臺的情形依然非常普遍。", 
+                 "(C) 錯誤。多是單身羅漢腳來臺。", 
+                 "(D) 錯誤。初期根本不准女子來臺。"], 
+                "渡臺禁令雖嚴，但生活壓力下偷渡客依然絡繹不絕。");
+
+            addQ("30. 清帝國時期,住在臺灣府城的光光,要參加科舉考試必須遠赴中國大陸才能應考,這是因為當時臺灣隸屬於哪一行政單位?", 
+                ["臺灣省", "福建省", "北京城", "廣東省"], 
+                1, 
+                ["(A) 錯誤。建省要到1885年。", 
+                 "(B) 正確。清朝初期將臺灣納入版圖時，設立「臺灣府」並歸建於「福建省」管轄。因此考生須渡海至福建省會考鄉試。", 
+                 "(C) 錯誤。北京考會試。", 
+                 "(D) 錯誤。不屬廣東省。"], 
+                "清朝前兩百年，臺灣行政長官都在「福建省」管轄之下。");
+
+            addQ("31. 以下是一封寫於19世紀的信,信中這場讓查理來到亞洲戰場的戰事起因為何?<br>親愛的露易莎:<br>這場戰爭已經持續一年多了,我們從福州又回到島嶼的北方,與清軍進行激烈的攻防戰...孤拔將軍正在考慮是否進攻澎湖,轉移清軍注意力。...", 
+                ["開港通商", "琉球船難", "越南問題", "解決和臺灣原住民的衝突"], 
+                2, 
+                ["(A) 錯誤。開港通商是英法聯軍。", 
+                 "(B) 錯誤。琉球船難是牡丹社事件。", 
+                 "(C) 正確。信中提到「福州、島嶼北方、孤拔將軍」，描寫的是1884年「清法戰爭」。該戰爆發的根本原因是中法爭奪「越南」宗主權。", 
+                 "(D) 錯誤。法軍非打原住民。"], 
+                "清法戰爭的真正導火線是為了爭奪「越南」。");
+
+            addQ("<img src='Exam-History-3/p32.jpg' alt='第32題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>32. 附圖是一張戰爭期間發給的通行證部分內容(懇請准許宣教士馬偕進入貴國占領地...英國領事謹致),此通行證最可能使用於何時何地?", 
+                ["鴉片戰爭期間的打狗", "英法聯軍期間的安平", "清法戰爭期間的基隆", "甲午戰爭期間的澎湖"], 
+                2, 
+                ["(A) 錯誤。鴉片戰爭未波及臺灣。", 
+                 "(B) 錯誤。英法聯軍時馬偕尚未在臺。", 
+                 "(C) 正確。信中提到外軍「占領地」及「馬偕」。馬偕在臺傳教期間(北部)，曾出兵並占領臺灣北部(基隆)的外國軍隊是法國。故為清法戰爭期間的基隆。", 
+                 "(D) 錯誤。甲午戰爭馬偕活動區主要在北部。"], 
+                "馬偕在北臺灣傳教時，見證了法國艦隊炮轟基隆(清法戰爭)。");
+
+            addQ("<img src='Exam-History-3/p33.jpg' alt='第33題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>33. 歷史老師在課堂上講解某一歷史事件,如附圖所示(當時生番殺琉球島民54人...)。根據老師的說明判斷,下列敘述何者正確?", 
+                ["此事件後清廷開始劃界封山", "老師講解的是林爽文事件", "事件過後,臺灣被迫開放四口通商", "此事件後,清廷派沈葆楨來臺"], 
+                3, 
+                ["(A) 錯誤。劃界封山是清初政策。", 
+                 "(B) 錯誤。林爽文是漢人民變。", 
+                 "(C) 錯誤。開放通商是英法聯軍。", 
+                 "(D) 正確。圖片描述「生番殺琉球島民」，正是日本發動「牡丹社事件」的藉口。此事件後，清廷派「沈葆楨」來臺加強防務。", 
+                 "琉球人遇害 ➜ 日本出兵(牡丹社事件) ➜ 派沈葆楨來臺。");
+
+            addQ("34. 清康熙時期將臺灣的行政區分為一府三縣,從當時行政區畫分的情況來看,顯示出哪一歷史現象?", 
+                ["行政區域的畫分主要集中在東部與北部", "將臺灣府設於打狗一帶,乃是為了向東南亞發展", "規畫的行政區域皆在西部,並未擴及東部地區", "此行政區域的畫分已擴及至全島"], 
+                2, 
+                ["(A) 錯誤。初期集中西南部。", 
+                 "(B) 錯誤。臺灣府設在臺南。", 
+                 "(C) 正確。康熙年間設立的一府三縣，管轄範圍完全局限在「臺灣西部平原」，東部山區並未納入實際行政規畫中。", 
+                 "(D) 錯誤。未擴及全島。"], 
+                "清初的一府三縣，版圖只佔了臺灣的「西半邊」。");
+
+            addQ("35. 「19世紀末,由於政治局勢發生變化,琉球王國遭到他國併吞...『唐手』也隨之傳入該國。經過一段時間的發展,『唐手』名稱改為同音異字的『空手』,即為今日的『空手道』。」上述提及「政治局勢發生變化」,造成「唐手」向外傳播,此一變化最可能是指下列何者?", 
+                ["日本實施鎖國政策", "西班牙對日貿易受挫", "清帝國將臺灣納入版圖", "日本藉由牡丹社事件擴張勢力"], 
+                3, 
+                ["(A) 錯誤。鎖國政策在17世紀。", 
+                 "(B) 錯誤。與此無關。", 
+                 "(C) 錯誤。納入版圖在17世紀末。", 
+                 "(D) 正確。1874年牡丹社事件後，清廷承認日本出兵為保民義舉，日本藉此擴張勢力，隨後於1879年正式吞併琉球王國。"], 
+                "牡丹社事件導致了琉球王國被日本合法併吞。");
+
+            addQ("<img src='Exam-History-3/p36.jpg' alt='第36題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>36. 附圖是佳維去圖書館作一份有關臺灣行政區劃的報告時所找到的地圖(顯示有噶瑪蘭廳)。他的報告內容可能是臺灣歷史發展中的哪一時期?", 
+                ["鄭氏時期", "雍正時期", "嘉慶時期", "康熙時期"], 
+                2, 
+                ["(A) 錯誤。鄭氏只有一府二縣。", 
+                 "(B) 錯誤。雍正增設彰化、淡水，無噶瑪蘭。", 
+                 "(C) 正確。地圖中出現「噶瑪蘭廳」(宜蘭)，該廳是在「嘉慶」年間才正式設立的，代表力量延伸至東部。", 
+                 "(D) 錯誤。康熙只有一府三縣。"], 
+                "行政區判斷年代：看到「噶瑪蘭(宜蘭)」＝嘉慶時期。");
+
+            addQ("37. 下列有關清初臺灣的敘述,何者正確?", 
+                ["對臺灣的政策,禁止渡臺人民攜眷", "嘉慶年間,在今臺灣中部增設彰化縣", "乾隆年間,在今宜蘭增設噶瑪蘭廳", "康熙年間,平定臺灣,置臺灣、臺北兩府,隸屬於福建省"], 
+                0, 
+                ["(A) 正確。清朝統治初期實施嚴格渡臺禁令，其中最關鍵的一條即為「禁止渡臺人民攜眷」。", 
+                 "(B) 錯誤。彰化縣是在「雍正」年間增設。", 
+                 "(C) 錯誤。噶瑪蘭廳是在「嘉慶」年間增設。", 
+                 "(D) 錯誤。康熙年間只設「臺灣府」，臺北府為光緒年間設立。"], 
+                "清初治臺最著名的社會現象(羅漢腳)，就是「禁止攜眷」造成的。");
+
+            addQ("38. 這條古道全程皆坐落在玉山國家公園管轄範圍內,是清廷最早開闢的三條通往東部道路之一,沿途可以看到高山草原、斷崖、沖積扇等風貌,是臺灣山林熱門旅遊景點。上述古道的修築和下列何者最有關係?", 
+                ["劉銘傳", "施琅", "林爽文", "沈葆楨"], 
+                3, 
+                ["(A) 錯誤。劉銘傳建鐵路。", 
+                 "(B) 錯誤。施琅時封山。", 
+                 "(C) 錯誤。林爽文是民變。", 
+                 "(D) 正確。題目描述的古道是「八通關古道」，這是牡丹社事件後，欽差大臣「沈葆楨」來臺推行「開山撫番」所修築通往東部的道路之一。", 
+                 "開山撫番的實體代表作：沈葆楨的「八通關古道」。");
+
+            addQ("39. 清廷將臺灣納入版圖後,初期採消極態度統治,直到下列哪一事件發生後,才轉而積極建設,增強防務?", 
+                ["開港通商", "日軍犯臺", "清法戰爭", "臺灣建省"], 
+                1, 
+                ["(A) 錯誤。開港通商時尚未全面積極建設。", 
+                 "(B) 正確。1874年「日軍犯臺」(牡丹社事件)，讓清廷驚覺海防空虛。此事件成為清朝治臺態度由「消極防範」轉向「積極建設(派沈葆楨)」的分水嶺。", 
+                 "(C) 錯誤。清法戰爭促成建省，但第一次態度大轉變在牡丹社事件。", 
+                 "(D) 錯誤。建省是積極建設的結果。"], 
+                "讓清政府從消極變積極的鬧鐘：日本發動的牡丹社事件。");
+
+            addQ("40. 清帝國統治臺灣初期,曾明令禁止男子攜眷來臺,其後清廷為了積極建設,取消該項限制。此項禁令的取消,對日後臺灣發展帶來什麼樣的影響?", 
+                ["人口擴增,拓墾加速", "族群械鬥,日趨激烈", "性別失衡,男多於女", "漢人活動範圍受限制"], 
+                0, 
+                ["(A) 正確。沈葆楨廢除禁止攜眷禁令，使漢人能全家合法移民，家庭結構穩定促成「人口擴增」，更多勞動力投入農業使「拓墾加速」。", 
+                 "(B) 錯誤。家庭穩定有助減少械鬥。", 
+                 "(C) 錯誤。開放攜眷有助改善性別失衡。", 
+                 "(D) 錯誤。漢人活動範圍隨開山擴大。"], 
+                "開放家眷來臺，羅漢腳變少，家庭人口變多，開墾速度加速。");
+
+            addQ("<img src='Exam-History-3/p41.jpg' alt='第41題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>41. 十八世紀時,有一位歐洲貴族乘船漂流至臺灣某地區,發現清廷並未在該地區設置廳、縣治理,因此當他返回歐洲後,大力遊說各國派兵來此區建立殖民地。上述「未設置廳、縣治理」的地區,最可能是附圖中甲、乙、丙、丁何處?", 
+                ["甲", "乙", "丙", "丁"], 
+                3, 
+                ["(A) 錯誤。甲有廳縣。", 
+                 "(B) 錯誤。乙有彰化縣。", 
+                 "(C) 錯誤。丙有臺灣府。", 
+                 "(D) 正確。18世紀清代前期實施「劃界封山」，將「東部」視為原住民保留地，不准漢人進入，也「未設置廳、縣治理」。這塊政權真空地帶(丁區)引來外國覬覦。"], 
+                "清朝前期的東部(後山)是一片沒有縣廳治理的無政府地帶。");
+
+            addQ("42. 清帝國末年,朝廷為了越南問題與某一國家爆發激烈戰鬥,戰火延燒至基隆、淡水、澎湖等地,此場戰爭對臺灣的主要影響為何?", 
+                ["簽約割讓,臺灣成為殖民地", "興建億載金城,強化臺灣防衛", "增設噶瑪蘭廳,拓墾臺灣東部", "改建為省,提升臺灣行政層級"], 
+                3, 
+                ["(A) 錯誤。這是甲午戰爭結果。", 
+                 "(B) 錯誤。億載金城是牡丹社事件後建的。", 
+                 "(C) 錯誤。增設噶瑪蘭廳是嘉慶年間的事。", 
+                 "(D) 正確。因「越南問題」引發，戰火延燒基隆淡水的戰爭是「清法戰爭」。戰後清廷深感臺灣海防重要，將臺灣從福建獨立「改建為省」，提升行政層級。"], 
+                "清法戰爭打完後，清廷給臺灣升格建省。");
+
+            addQ("<img src='Exam-History-3/p43.jpg' alt='第43題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>43. 附圖呈現某一歷史事件前後,清廷治臺措施的差異(從禁止無照渡臺 變成 廢止限制免費乘船)。從圖中內容判斷,此一事件應是下列何者?", 
+                ["甲午戰爭", "清法戰爭", "林爽文事件", "牡丹社事件"], 
+                3, 
+                ["(A) 錯誤。甲午割臺。", 
+                 "(B) 錯誤。清法後建省。", 
+                 "(C) 錯誤。林爽文事件未全面廢除禁令。", 
+                 "(D) 正確。政策從禁止渡臺轉變為廢止限制甚至提供補助，這種徹底廢除清初「渡臺禁令」的轉折，正是發生在「牡丹社事件」之後，由沈葆楨推行的。"], 
+                "政策180度大轉彎(從嚴禁到鼓勵來臺)，關鍵樞紐就是「牡丹社事件(沈葆楨)」。");
+
+            addQ("<img src='Exam-History-3/p44.jpg' alt='第44題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>44. 附圖是清康熙年間由西洋傳教士繪製的臺灣地圖。此圖只繪製臺灣西半部,反映出當時清廷治臺的何種政策?", 
+                ["禁絕漢人渡臺,防止臺灣成為反清基地", "施行劃界封山,禁止漢人入侵原住民區", "開港通商,設定西半部為對外貿易據點", "加強建設西半部,使該地成為海防重鎮"], 
+                1, 
+                ["(A) 錯誤。渡臺禁令非導致地圖畫一半的原因。", 
+                 "(B) 正確。地圖只畫出西半部，東半部空白，精準反映清初的「劃界封山」政策。清廷將東部視為界外之地嚴禁開發，因此官方地圖中臺灣有效版圖僅在西半部。", 
+                 "(C) 錯誤。開港通商為19世紀。", 
+                 "(D) 錯誤。清初消極治臺。"], 
+                "半個臺灣的地圖，象徵著清朝在「番界」前停下的統治腳步(劃界封山)。");
+
+            addQ("45. 清末沈葆楨來臺加強海防、增設炮臺、修築通往後山的道路、開放對臺移民,加速了臺灣的墾殖與發展。促使沈葆楨積極對臺建設的直接原因為何?", 
+                ["漢人與原住民發生衝突", "地方械鬥在臺日益嚴重", "日本出兵侵犯臺灣", "法國企圖進佔臺灣"], 
+                2, 
+                ["(A) 錯誤。非主因。", 
+                 "(B) 錯誤。非主因。", 
+                 "(C) 正確。1874年「日本出兵侵犯臺灣」南部爆發牡丹社事件，戳破海防空虛，迫使清廷派沈葆楨來臺加強防務與開山建設。", 
+                 "(D) 錯誤。法國進佔是清法戰爭(劉銘傳)。"], 
+                "沈葆楨 = 牡丹社事件(防日本)；劉銘傳 = 清法戰爭(防法國)。");
+
+            addQ("46. 附圖的四張卡片分別代表清朝曾對臺灣採取的統治措施,若依這些措施最早在臺施行的時間先後順序排列,下列何者正確?<br>甲：宣布建省<br>乙：開港通商<br>丙：劃界封山<br>丁：開山撫番", 
+                ["甲→丁→乙→丙", "乙→甲→丙→丁", "丙→乙→丁→甲", "丁→丙→甲→乙"], 
+                2, 
+                ["(A) 錯誤。順序錯亂。", 
+                 "(B) 錯誤。順序錯亂。", 
+                 "(C) 正確。丙「劃界封山」(清初) ➜ 乙「開港通商」(1858英法聯軍) ➜ 丁「開山撫番」(1874牡丹社事件) ➜ 甲「宣布建省」(1885清法戰爭)。", 
+                 "(D) 錯誤。順序錯亂。"], 
+                "政策時間軸：消極隔離(封山) ➜ 被迫開放(開港) ➜ 驚覺外患(開山) ➜ 升格鞏固(建省)。");
+
+            addQ("<img src='Exam-History-3/p47.jpg' alt='第47題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>47. 動畫公司設計一部名為「百步蛇與太陽旗的戰爭」的短片,若影片內容須合乎歷史發展脈絡,則附圖中「丙場景」(發生在琉球人民遇害與清廷承認保民義舉之間)應為下列何者?", 
+                ["淡水、基隆為主要戰場,兩軍死傷無數", "原住民在南投山區抗日,日軍傷亡慘重", "朝廷任命沈葆楨為欽差大臣,來臺加強防務", "清廷派軍參戰,因戰事失利,被迫割讓臺灣"], 
+                2, 
+                ["(A) 錯誤。這是清法戰爭。", 
+                 "(B) 錯誤。這是日治時期(霧社事件)。", 
+                 "(C) 正確。主軸為牡丹社事件。日軍出兵(乙)後，清廷震驚，隨即「任命沈葆楨為欽差大臣，來臺加強防務」(丙)並交涉，最後簽約承認保民義舉(丁)。", 
+                 "(D) 錯誤。這是甲午戰爭。"], 
+                "牡丹社事件SOP：日本登陸 ➜ 派沈葆楨對峙 ➜ 簽約承認保民義舉。");
+
+            addQ("48. 附表是清代臺灣人口統計表,從康熙到嘉慶年間人口總數大量增加的主要原因,是下列何者?(康熙22年:3萬多 -> 嘉慶16年:194萬多)", 
+                ["醫療進步,出生率大增", "中國大陸人口大量移民臺灣", "政治清明,社會安定無動亂", "經濟富庶,工商業繁榮"], 
+                1, 
+                ["(A) 錯誤。醫療依然落後。", 
+                 "(B) 正確。清代人口從數萬暴增到近兩百萬，主因是中國大陸東南沿海漢人，不斷合法或偷渡「大量移民臺灣」開墾。", 
+                 "(C) 錯誤。當時社會動盪不安。", 
+                 "(D) 錯誤。當時以農業為主。"], 
+                "臺灣早期人口暴增的動力來源：大量的大陸漢人移民。");
+
+            addQ("49. 小玲與家人至北埔旅遊,參觀著名的古蹟「金廣福公館」,這是清帝國時期,閩粵人士一起拓墾的重要據點。此古蹟的存在,反應清帝國的何種現象?", 
+                ["漢人常以合資方式開墾土地", "漢人越過番界違法開墾土地", "漢人以武力強占原住民土地", "為了爭取水源漢人彼此不合"], 
+                0, 
+                ["(A) 正確。清代開發土地需龐大資金。商人常採「合資」組成墾號。新竹北埔的「金廣福公館」即由閩粵(客)聯合出資成立，是合資開墾代表。", 
+                 "(B) 錯誤。金廣福是合法墾號。", 
+                 "(C) 錯誤。合資是其組織核心特徵。", 
+                 "(D) 錯誤。金廣福展現了閩粵合作。"], 
+                "「金廣福墾號」代表：1.合資開墾；2.閩客合作。");
+
+            addQ("50. 農業開墾必須有灌溉設施的配合,才能使荒地變成良田。下列有關臺灣在清帝國時期,修築完成的水利灌溉工程及其灌溉區域的配對,何者正確?", 
+                ["臺北地區→八堡圳", "鳳山縣城、打狗一帶→曹公圳", "臺中盆地→瑠公圳", "濁水溪沿岸→貓霧揀圳"], 
+                1, 
+                ["(A) 錯誤。八堡圳在彰化。", 
+                 "(B) 正確。「曹公圳」由鳳山知縣曹謹修建，引高屏溪水，灌溉「鳳山縣城、打狗(高雄)一帶」。", 
+                 "(C) 錯誤。瑠公圳在臺北。", 
+                 "(D) 錯誤。貓霧揀圳在臺中。"], 
+                "清代三大水圳：北＝瑠公圳；中＝八堡圳；南＝曹公圳。");
+
+            addQ("51. 道光15年,淡水廳同知李嗣鄴先後諭令粵籍姜秀鑾、閩籍林德修、周邦正合組成「金廣福墾號」,進駐新竹北埔...上述內容展現出臺灣先民開墾過程中有哪一現象?", 
+                ["多採合資模式開墾", "均獲得官方授意", "均需設置隘墾總部防止原住民侵擾", "近山地帶是最早開墾的地區"], 
+                0, 
+                ["(A) 正確。引文「粵籍、閩籍合組成金廣福墾號」，清楚展現先民為籌措資金與分擔風險，常採「合資模式」開墾的現象。", 
+                 "(B) 錯誤。「均」過於絕對，亦有私墾。", 
+                 "(C) 錯誤。「均」過於絕對，平原開發通常不需強大隘墾防禦。", 
+                 "(D) 錯誤。最早開墾是西部平原。"], 
+                "看到「金廣福」，就要聯想到「合資開墾」。");
+
+            addQ("52. 以下是某書對臺灣的描述:「此時期臺灣居民不得與外國往來...限定對渡港口。臺灣輸出的稻米銷往福建，糖銷往華北。」此時期由負責上述貨物運銷的商人自行組成的組織,最可能是下列何者?", 
+                ["郊", "洋行", "市舶司", "總理衙門"], 
+                0, 
+                ["(A) 正確。描述的是開港前臺灣與中國大陸的兩岸貿易。負責此貿易的臺灣商人，為維護利益組成了商業公會組織「郊」。", 
+                 "(B) 錯誤。洋行是開港後外商據點。", 
+                 "(C) 錯誤。市舶司是宋元明官方機構。", 
+                 "(D) 錯誤。總理衙門是清末外交機構。"], 
+                "負責賺大陸錢的商人同業公會，叫做「郊」。");
+
+            addQ("<img src='Exam-History-3/p53.jpg' alt='第53題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>53. 清帝國統治時期,臺灣曾出現一種稱為「郊」的組織,依其性質推斷,這種組織主要分布在附圖中何處?", 
+                ["甲", "乙", "丙", "丁"], 
+                0, 
+                ["(A) 正確。「郊」是從事貿易的商人公會。活躍於府城、鹿港、艋舺等西部重要港口(一府二鹿三艋舺)。地圖中「甲」區包含了北部至西部的主要港口市鎮區。", 
+                 "(B) 錯誤。乙為內山/東部，非港口。", 
+                 "(C) 錯誤。丙為南部內陸。", 
+                 "(D) 錯誤。丁為東部後山。"], 
+                "「郊」是貿易公會，設立在船隻進出的西部大港口。");
+
+            addQ("54. 有位學者指出:「茶、糖、樟腦的出口總值占全部出口總值之94%,是造成此時期臺灣出超的主要因素。其中,茶和樟腦由於主要產於山區...加速了邊區的拓展...」這段話最可能是討論下列何者?", 
+                ["鄭氏的拓墾與海外貿易", "康熙將臺灣納入版圖的影響", "臺灣開港後的經濟、社會發展", "清廷實施渡臺禁令的影響"], 
+                2, 
+                ["(A) 錯誤。鄭氏出口蔗糖、鹿皮。", 
+                 "(B) 錯誤。康熙尚未有茶腦大量出口。", 
+                 "(C) 正確。引文提到茶、糖、樟腦(臺灣三寶)造成「出超」，並促使向山區拓展。這是臺灣「開港通商後」受國際市場需求帶動的典型經濟與社會發展現象。", 
+                 "(D) 錯誤。禁令與此無關。"], 
+                "看到「茶、糖、樟腦」並帶來「出超」，絕對是「開港通商後」。");
+
+            addQ("<img src='Exam-History-3/p55.jpg' alt='第55題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>55. 附表是臺灣開港通商後,部分洋行在臺的營運狀況(主要出口商品：茶、樟腦)。若考慮當時商品產區與出口地,這些洋行最可能皆設置於附圖中何處?", 
+                ["甲(北部)", "乙(中部)", "丙(南部)", "丁(東部)"], 
+                0, 
+                ["(A) 正確。表格顯示主要出口是「茶」與「樟腦」。開港後茶葉種於北部丘陵由淡水出口；樟腦產於中北部。因此洋行最常設立在「北部」(甲區)。", 
+                 "(B) 錯誤。中部以米為主。", 
+                 "(C) 錯誤。南部以糖為主。", 
+                 "(D) 錯誤。東部未開港。"], 
+                "開港後：北部賣「茶/樟腦」，南部賣「糖」。");
+
+            addQ("56. 《周成過臺灣》是著名的民間傳說...適逢淡水、雞籠開港通商,周成在大稻埕從事新興商品出口而致富...根據上述內容,周成最有可能從事下列何種商品的貿易?", 
+                ["茶葉", "鹿皮", "蔗糖", "鴉片"], 
+                0, 
+                ["(A) 正確。背景在「開港通商」後，且在「大稻埕」從事新興商品出口。大稻埕正是全臺「茶葉」加工與外銷的集散中心。", 
+                 "(B) 錯誤。鹿皮是早期出口品。", 
+                 "(C) 錯誤。蔗糖出口重鎮在南部。", 
+                 "(D) 錯誤。鴉片是進口商品。"], 
+                "大稻埕的繁華密碼：茶葉。");
+
+            addQ("57. 清帝國統治時期,臺灣興築許多大規模的水圳,如:鳳山曹公圳、彰化八堡圳、臺北瑠公圳等。當時修築水圳的主要原因為何?", 
+                ["地層下陷嚴重,舊有河川枯竭", "土地不當開發,水源遭受汙染", "工業用水不足,提供穩定水源", "擴大灌溉面積,增加農業產量"], 
+                3, 
+                ["(A) 錯誤。當時無嚴重下陷問題。", 
+                 "(B) 錯誤。汙染不嚴重。", 
+                 "(C) 錯誤。當時為傳統農業，無工業用水需求。", 
+                 "(D) 正確。漢人大量移民農墾需要穩定水源，修築水圳最根本目的就是為了「擴大灌溉面積，增加農業(稻米)產量」。"], 
+                "在農業社會，水圳(灌溉系統)就是將旱地變稻田的關鍵。");
+
+            addQ("58. 臺灣的開發是由南而北,但清帝國時代後期已有北勝於南的傾向,這種情勢的轉變,主要與哪一項作物的增產及其外銷有關?", 
+                ["茶葉", "樟腦", "蔗糖", "稻米"], 
+                0, 
+                ["(A) 正確。清代後期(開港後)，北臺灣適合種茶。「茶葉」成為外銷最賺錢商品，帶動北部繁榮，促成經濟重心「由南向北」轉移。", 
+                 "(B) 錯誤。樟腦影響力不如茶葉。", 
+                 "(C) 錯誤。蔗糖是南部產品。", 
+                 "(D) 錯誤。稻米全臺皆有。"], 
+                "讓臺灣經濟板塊南衰北盛的作物是「茶葉」。");
+
+            addQ("59. 臺灣某地方志記載:「街衢縱橫...泉廈郊商居多。舟車輻湊,百貨充盈。」到了20世紀初,這座位於臺灣中部的城市已告衰落,盛況不再。這是指下列哪一個城市?", 
+                ["八里坌", "打狗", "鹿港", "艋舺"], 
+                2, 
+                ["(A) 錯誤。八里坌在北部。", 
+                 "(B) 錯誤。打狗在南部。", 
+                 "(C) 正確。描述「郊商居多」且位於「中部」的城市是「鹿港」(一府二鹿)。後因港口淤積而衰落。", 
+                 "(D) 錯誤。艋舺在臺北(北部)。"], 
+                "「一府二鹿三艋舺」的中部代表，因淤積而沒落的城市：鹿港。");
+
+            addQ("60. 附表是臺灣史上各個時期的人口數統計表。從表中資料判讀,1680~1860年間人口數的增加(20萬->200萬),應與下列哪一因素最相關?", 
+                ["鄭成功率領軍民來臺", "漢人移民與偷渡者的湧入", "政府解除渡臺禁令", "中國境內內戰不斷"], 
+                1, 
+                ["(A) 錯誤。鄭成功來臺人數不足以解釋增加到200萬。", 
+                 "(B) 正確。清初到開港前近兩百年人口暴增，最主要動力來源就是大陸東南沿海「漢人」不斷合法或「冒險偷渡湧入」臺灣開墾。", 
+                 "(C) 錯誤。解除禁令是1874年(晚於1860)。", 
+                 "(D) 錯誤。內戰非推動移民最主要常態因素。"], 
+                "清代臺灣人口暴增的解答：漢人移民的湧入。");
+
+            addQ("61. 文獻紀錄臺南三郊的由來:配運於上海...曰北郊...配運於金、廈...曰南郊...熟悉於臺灣各港之採買者曰港郊...從這紀錄看,三郊的名號是源自下列何者?", 
+                ["進行貿易地區", "郊商所在地點", "沿襲舊有慣例", "營商商號數量"], 
+                0, 
+                ["(A) 正確。運往北方稱「北郊」，南方稱「南郊」，各港採買稱「港郊」。這些名號完全是依照「進行貿易的地區」命名的。", 
+                 "(B) 錯誤。他們都位在臺南。", 
+                 "(C) 錯誤。未提及舊例。", 
+                 "(D) 錯誤。與數量無關。"], 
+                "去北方做生意叫北郊，去南方叫南郊。依貿易地區命名。");
+
+            addQ("<img src='Exam-History-3/p62.jpg' alt='第62題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>62. 圖(一)是博物館展覽對臺灣歷史上某陶製漏斗狀工具使用方式的介紹(將糖汁倒入漏罐承接糖蜜...乾燥後取出糖塊)。此種工具在十八至十九世紀之間,最多被用於圖(二)中何處?", 
+                ["甲(北部)", "乙(中部)", "丙(南部)", "丁(東部)"], 
+                2, 
+                ["(A) 錯誤。北部氣候較不適合大規模種甘蔗。", 
+                 "(B) 錯誤。中部主要產米。", 
+                 "(C) 正確。圖中工具為提煉「蔗糖」的漏罐。清代甘蔗種植與製糖產業高度集中在日照充足的「臺灣南部」(丙區，如臺南高雄一帶)。", 
+                 "(D) 錯誤。東部當時未開發。"], 
+                "看到製糖工具，位置鎖定陽光燦爛的「南臺灣」。");
+
+            addQ("63. 為慶祝彰化建縣300年,彰化縣政府邀請明華園戲劇總團以彰化母親河「___」開鑿故事,改編紀念大戲。其中一位歷史人物是施世榜,劇中描述他帶領族人歷經千辛萬難的水圳開墾過程。上述缺空處應填入下列何者?", 
+                ["瑠公圳", "八堡圳", "曹公圳", "貓霧揀圳"], 
+                1, 
+                ["(A) 錯誤。瑠公圳在臺北。", 
+                 "(B) 正確。關鍵字「彰化」、「施世榜」。施世榜在彰化平原引水開鑿了「八堡圳」，被譽為彰化的母親河。", 
+                 "(C) 錯誤。曹公圳在高雄。", 
+                 "(D) 錯誤。貓霧揀圳在臺中。"], 
+                "施世榜＋彰化平原 ＝ 八堡圳。");
+
+            addQ("64. 關於清帝國時期的「郊」與「洋行」之敘述,下列何者正確?", 
+                ["郊產生於臺灣開港通商之後", "郊是由外國使節和臺灣商人共同組成", "洋行設立在臺灣各通商口岸", "洋行在臺灣開港後漸漸沒落"], 
+                2, 
+                ["(A) 錯誤。郊在開港通商前就已興盛。", 
+                 "(B) 錯誤。郊由本土商人組成。", 
+                 "(C) 正確。「洋行」是外商為了收購物產，在臺灣被強迫開放的「各通商口岸」(如淡水、安平)所設立的商業辦事處。", 
+                 "(D) 錯誤。洋行在開港後才興起。"], 
+                "「郊」是本土舊公會；「洋行」是外商新公司，以開港通商為分界。");
+
+            addQ("65. 臺灣大學校園內的醉月湖舊稱「牛湳池」,過去是臺北地區重要水圳的調節水塘之一,這條水圳灌溉今日新店、景美、古亭...該水圳歷經父子兩代才終於完工...上文中的「牛湳池」最可能是哪一水圳的調節水塘?", 
+                ["瑠公圳", "貓霧揀圳", "八堡圳", "曹公圳"], 
+                0, 
+                ["(A) 正確。引文指出水圳負責灌溉「臺北地區」(新店景美)。清代由郭錫瑠父子開鑿灌溉臺北盆地的水利工程即為「瑠公圳」。", 
+                 "(B) 錯誤。貓霧揀圳在臺中。", 
+                 "(C) 錯誤。八堡圳在彰化。", 
+                 "(D) 錯誤。曹公圳在高雄。"], 
+                "臺北盆地、新店、父子兩代 ＝ 瑠公圳。");
+
+            addQ("66. 小豪選了一門「19世紀中葉後的臺灣發展史」的課程,與同學決定以當時臺灣的對外貿易發展作為期末報告。小豪這組同學所蒐集到的資料,下列何者正確?", 
+                ["安安：此時為清帝國前期", "典學：臺灣開放鹿港、淡水兩港通商", "建偉：為防海盜,責施海禁", "勝鈞：鴉片為此時進口大宗"], 
+                3, 
+                ["(A) 錯誤。19世紀中葉後為清帝國後期。", 
+                 "(B) 錯誤。開放的港口不含鹿港。", 
+                 "(C) 錯誤。此時已開港通商。", 
+                 "(D) 正確。19世紀中葉臺灣開港後，出口大宗為茶糖樟，而「進口商品」最大宗正是英國商人輸入的「鴉片」。"], 
+                "開港後貿易結構：出口靠「茶糖樟」，進口靠「鴉片」。");
+
+            addQ("67. 學界對清帝國治臺前期的作為,有「消極政府,積極人民」的評論...下列哪一項可作為上述「積極人民」的證據?", 
+                ["設置土牛溝", "興築八堡圳", "設置臺北府", "強化後山防務"], 
+                1, 
+                ["(A) 錯誤。土牛溝是政府作為。", 
+                 "(B) 正確。「興築八堡圳」是由民間商人(施世榜)出資帶領民眾開鑿的水利工程。體現了在政府消極下，「民間力量」自力開發的積極精神。", 
+                 "(C) 錯誤。設臺北府是政府作為。", 
+                 "(D) 錯誤。強化防務是政府作為。"], 
+                "清前期的水圳(如八堡圳)多為民間自費建的，展現了積極人民的精神。");
+
+            addQ("<img src='Exam-History-3/p68.jpg' alt='第68題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>68. 某港口在荷治時期與鄭氏時期已經是運輸貿易中心。1683年...此處成為臺灣對外的唯一「正口」,所有來往船隻均須取道於此...此重要港口位於附圖中的何處?", 
+                ["甲(北部)", "乙(中部)", "丙(南部)", "丁(東部)"], 
+                2, 
+                ["(A) 錯誤。北部在清初未成大港。", 
+                 "(B) 錯誤。中部鹿港是後來興起的。", 
+                 "(C) 正確。荷治與鄭氏時期的貿易中心，且清初被指定為「唯一正口」(鹿耳門)，這個歷史悠久的大港就是位於南部的「臺南(府城/安平)」，對應丙區。", 
+                 "(D) 錯誤。東部未開發。"], 
+                "清初全臺唯一合法對外窗口，開在南部的臺南(鹿耳門)。");
+
+            addQ("<img src='Exam-History-3/p69.jpg' alt='第69題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>69. 附表是清末自西元1868年至1894年臺灣進出口值統計表。請問:表中哪一期間,開始反映出臺灣對外貿易由入超轉變為出超?", 
+                ["1868~1869", "1870~1874", "1875~1879", "1890~1894"], 
+                2, 
+                ["(A) 錯誤。此時期出減進為負數(入超)。", 
+                 "(B) 錯誤。此時期出減進為負數(入超)。", 
+                 "(C) 正確。觀察表格「出口值減進口值」，在「1875~1879」區間，數值首次由負轉正(10.3)。代表貿易「開始由入超轉變為出超」。", 
+                 "(D) 錯誤。此時期也是出超，但非「開始」轉變。"], 
+                "出超 ＝ 出口 ＞ 進口 ＝ 出口減進口為正數。");
+
+            addQ("70. 十九世紀中葉,臺灣的茶葉外銷量迅速增加,還吸引了外來的資金和技術到臺灣。若想了解當時臺灣茶葉出口的詳細情形,最適合參閱下列何項資料?", 
+                ["淡水海關報告", "熱蘭遮城日誌", "雍正朝硃批奏摺", "承天府檔案"], 
+                0, 
+                ["(A) 正確。19世紀中葉開港通商後茶葉成為外銷主力，而「淡水」是北部茶葉出口的主要通商口岸。海關負責記錄貿易數據，因此「淡水海關報告」最適合。", 
+                 "(B) 錯誤。熱蘭遮城日誌是荷蘭時期。", 
+                 "(C) 錯誤。雍正朝尚未開港。", 
+                 "(D) 錯誤。承天府檔案是鄭氏時期。"], 
+                "研究近代商品進出口，找負責收稅放行的「海關檔案」。");
+
+            addQ("<img src='Exam-History-3/p71.jpg' alt='第71題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>71. 附圖是臺灣與中國大陸對渡港口示意圖(甲-八里坌對福州；乙-鹿港對泉州；丙-鹿耳門對廈門)。關於圖中各港口說明,下列何者正確?", 
+                ["甲乙丙三個港口開放的順序,顯示臺灣開墾方向是由北向南發展", "丙港口附近的農地屬於貓霧揀圳灌溉範圍", "乙港口原本歸諸羅縣管理,後來改歸彰化縣管理", "甲港口是當時最早合法開放與中國大陸貿易的港口"], 
+                2, 
+                ["(A) 錯誤。開墾方向由南向北。", 
+                 "(B) 錯誤。丙(臺南)非貓霧揀圳(臺中)。", 
+                 "(C) 正確。乙港口為中部「鹿港」。清初一府三縣時歸「諸羅縣」；雍正增設「彰化縣」後，鹿港改歸彰化縣管理。", 
+                 "(D) 錯誤。最早開放的是丙(鹿耳門)。"], 
+                "行政區跟著人口走：中部原本屬諸羅縣，後來獨立為彰化縣(含鹿港)。");
+
+            addQ("72. 清帝國後期,茶葉成為臺灣重要的出口作物之一。關於當時臺灣茶葉的敘述,以下哪些正確?<br>(甲)為當時出口商品貿易額的第二位<br>(乙)以打狗為出口港<br>(丙)主要銷往東南亞、美國等地<br>(丁)產地在臺灣北部的丘陵地區", 
+                ["甲乙丙丁", "乙丙丁", "丙丁", "甲丁"], 
+                2, 
+                ["(A) 錯誤。甲、乙錯誤。", 
+                 "(B) 錯誤。乙錯誤。", 
+                 "(C) 正確。清末開港後，(丙)茶葉主要遠銷美國與東南亞；(丁)茶樹適合生長於「臺灣北部的丘陵地區」，此兩項正確。", 
+                 "(D) 錯誤。甲錯誤(茶葉是出口第一位)。"], 
+                "茶葉知識：產於北部丘陵 ➜ 淡水出口 ➜ 銷往美國等地。");
+
+            addQ("<img src='Exam-History-3/p73.jpg' alt='第73題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>73. 歷史課上,同學們在討論清代臺灣的郊商,根據討論的內容判斷,哪一位同學的說法正確?", 
+                ["隨著臺灣人口增加,海外貿易日漸擴大,而興起從事海外貿易的商人。", "此為一種商業組織,在當時的重要市鎮中郊商林立。", "由貿易地相同的商人所組成的有糖郊、布郊等。", "由從事特定商品買賣的商人組成的有泉郊、廈郊等。"], 
+                1, 
+                ["(A) 錯誤。郊商從事兩岸貿易，非廣泛海外貿易。", 
+                 "(B) 正確。「郊」是清代商人的「商業公會組織」。在重要市鎮中(一府二鹿三艋舺)郊商林立，掌控經濟。", 
+                 "(C) 錯誤。糖郊、布郊是依「特定商品」命名。", 
+                 "(D) 錯誤。泉郊、廈郊是依「貿易地區」命名。"], 
+                "「郊」是清代商人組成的同業公會。");
+
+            addQ("<img src='Exam-History-3/p74.jpg' alt='第74題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>74. 附表是清帝國後期某段時期臺灣進出口值統計表。表中哪一年開始,反映出臺灣對外貿易由入超轉變為出超?", 
+                ["1868~1869", "1870~1874", "1875~1879", "1890~1894"], 
+                2, 
+                ["(A) 錯誤。1868-1869 (出口 93.0 < 進口 124.5)，為入超。", 
+                 "(B) 錯誤。1870-1874 為入超。", 
+                 "(C) 正確。在「1875~1879」區間，出口年平均值(282.3)首度大於進口年平均值(272.0)。代表貿易狀態「開始由入超轉為出超」。", 
+                 "(D) 錯誤。此時已是出超期，非「開始」。"], 
+                "出超定義：出口 ＞ 進口。找出表格中第一個出口大於進口的年份。");
+
+            addQ("<img src='Exam-History-3/p75.jpg' alt='第75題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>75. 歷史老師在課堂上介紹某位歷史人物,如附圖所示(辭去薪水前往臺灣...在府城設醫館遭排擠...轉往打狗發展...後回府城重設醫館)。老師介紹的應該是下列何人?", 
+                ["馬偕", "施琅", "馬雅各", "鄭芝龍"], 
+                2, 
+                ["(A) 錯誤。馬偕在北部活動。", 
+                 "(B) 錯誤。施琅是攻臺將領。", 
+                 "(C) 正確。在南部「府城(臺南)」與打狗設立西式醫館並傳教的人物，是英國長老教會的「馬雅各」醫生。", 
+                 "(D) 錯誤。鄭芝龍是海商。"], 
+                "南部蓋醫館受挫又重啟的傳教士醫生＝馬雅各。");
+
+            addQ("76. 歸化清帝國的平埔族,除了要向政府繳納稅收之外,還需服勞役,長期受到勞力的壓榨與不當差遣,最終發生了反抗官府事件,以下列何者為例?", 
+                ["大甲西社事件", "郭懷一事件", "麻豆社之役", "朱一貴事件"], 
+                0, 
+                ["(A) 正確。雍正年間，中部平埔族因不堪官府長期且繁重勞役壓榨，發起武裝反抗，史稱「大甲西社事件」，是清代最大原住民反抗事件。", 
+                 "(B) 錯誤。郭懷一是漢人反荷。", 
+                 "(C) 錯誤。麻豆社之役是荷蘭鎮壓原住民。", 
+                 "(D) 錯誤。朱一貴是漢人民變。"], 
+                "官員逼迫原住民服勞役引發的造反，就是「大甲西社事件」。");
+
+            addQ("77. 臺灣在許多地區有所謂的「有應公廟」、「同歸所」,廟中祭祀的多為無主孤魂,由地方善心人士出資興建,進而成為臺灣的民間信仰之一。有應公廟和同歸所的出現,代表下列何種歷史意義?", 
+                ["移民文化不發達", "荷蘭統治時期臺人英勇反抗", "清帝國時期臺灣疫病流行", "清初臺灣民間動亂頻繁"], 
+                3, 
+                ["(A) 錯誤。與文化發達無關。", 
+                 "(B) 錯誤。有應公廟多為清代產物。", 
+                 "(C) 錯誤。疫病非最主要歷史現象(羅漢腳)。", 
+                 "(D) 正確。清初產生大量單身羅漢腳，常參與民變與械鬥，死後無人收屍。民間設立「有應公廟」安撫孤魂，反映了清初治安敗壞、民間動亂頻繁的現實。"], 
+                "拜無主孤魂的「有應公廟」，是清代羅漢腳與械鬥動亂的見證。");
+
+            addQ("<img src='Exam-History-3/p78.jpg' alt='第78題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>78. 騎樓俗稱「亭仔腳」...居民通常在房子內加了夾層...因為當時漢人移民大量進入臺灣,吏治不良,社會治安不好,民變、械鬥紛起,小窗可窺伺屋外動靜,必要時甚至可以置槍防禦。根據上雯,可以推斷附圖建築最常見於下列何時?", 
+                ["荷蘭佔領時期", "鄭氏政權在臺時期", "清帝國統治初期", "日本統治後期"], 
+                2, 
+                ["(A) 錯誤。荷蘭時期未有大規模械鬥。", 
+                 "(B) 錯誤。鄭氏時期非大規模械鬥期。", 
+                 "(C) 正確。引文提到「漢人大量進入、吏治不良、民變械鬥紛起」。描繪的是「清帝國統治初期(及中期)」社會亂象，因此民宅加入了防禦設計。", 
+                 "(D) 錯誤。日治後期治安良好。"], 
+                "民宅留小洞準備開槍，可見清代初期臺灣治安險惡。");
+
+            addQ("<img src='Exam-History-3/p79.jpg' alt='第79題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>79. 戴仁壽醫師被稱為臺灣痲瘋病之父...在新樓醫院行醫,此醫院是十九世紀臺灣開港通商後,西方傳教士馬雅各在通商口岸一帶創設的西式醫館改制而來。數年後,戴仁壽又轉往臺北的馬偕醫院服務...根據上文,戴仁壽醫師來臺灣行醫時,最初應是在附圖甲、乙、丙、丁何處從事醫療工作?", 
+                ["甲(北部)", "乙(中部)", "丙(南部)", "丁(東部)"], 
+                2, 
+                ["(A) 錯誤。甲是臺北，是他後來去的地方。", 
+                 "(B) 錯誤。乙無關。", 
+                 "(C) 正確。戴仁壽最初在「新樓醫院」行醫，前身由「馬雅各」創設。馬雅各的大本營位於南部的「府城(臺南)」一帶，對應丙區。", 
+                 "(D) 錯誤。丁無關。"], 
+                "馬雅各的足跡鎖定在南臺灣(府城/臺南)。");
+
+            addQ("80. 小豪參加旅行社所舉辦的淡水之旅...導遊解說:「這位傳教士的人生期許是『寧願燒盡,不願銹壞。』因此積極在臺傳教...如你們眼前所看到的牛津學堂就是他所興建的。」導遊介紹的傳教士是下列何人?", 
+                ["馬雅各", "沈從文", "沈有容", "馬偕"], 
+                3, 
+                ["(A) 錯誤。馬雅各在南部。", 
+                 "(B) 錯誤。沈從文是近代文學家。", 
+                 "(C) 錯誤。沈有容是明朝將領。", 
+                 "(D) 正確。關鍵字：「淡水」、「寧願燒盡，不願銹壞」、「牛津學堂」。奉獻給北臺灣的傳教士正是「馬偕」牧師。"], 
+                "馬偕三大記憶點：淡水、拔牙、牛津學堂。");
+
+            addQ("81. 清朝將臺灣納入版圖後,設置文教機構的目的為何?", 
+                ["貫徹殖民政策", "剷除反明思想", "宣揚農墾政策", "教育學子準備科舉考試"], 
+                3, 
+                ["(A) 錯誤。清朝未視臺灣為近代殖民地。", 
+                 "(B) 錯誤。非剷除反明思想。", 
+                 "(C) 錯誤。文教機構不教農墾。", 
+                 "(D) 正確。清代設立儒學與書院，最實際的功用就是「教育學子準備科舉考試」，培養能為朝廷所用的仕紳。"], 
+                "清代蓋學校的目標，就是為了訓練學生考「科舉」。");
+
+            addQ("<img src='Exam-History-3/p82.jpg' alt='第82題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>82. 老師為了幫助同學了解課程,利用附圖呈現上課內容(圖示：媽祖、王爺、土地公等神明信仰)。老師上課的主題是下列何者?", 
+                ["械鬥與民變的頻繁", "漳州人的原鄉信仰", "漢人移民共同信仰", "客家人的原鄉信仰"], 
+                2, 
+                ["(A) 錯誤。與械鬥無關。", 
+                 "(B) 錯誤。漳州原鄉信仰是開漳聖王。", 
+                 "(C) 正確。圖中「媽祖」、「王爺」、「土地公」超越祖籍限制，是所有來臺閩粵「漢人移民共同信奉」的神明。", 
+                 "(D) 錯誤。客家原鄉信仰是三山國王。"], 
+                "媽祖、王爺、土地公是「全民偶像」(共同信仰)。");
+
+            addQ("83. 清帝國統治時期,臺灣民變與械鬥迭起,社會動盪不安。當時械鬥頻傳,其主要原因最可能為下列何者?", 
+                ["來臺移民爭奪土地水源及利益,因而聚眾結黨鬥毆", "外國商人壟斷經濟大權,郊商難以競爭而爆發衝突", "統治階層濫徵雜稅,官吏因稅收分配不均相互爭鬥", "原住民土地遭到洋人侵占,生活窘困被迫武力抗爭"], 
+                0, 
+                ["(A) 正確。清代臺灣的「械鬥」是平民群體間的私鬥。爆發主因是在資源有限環境下，為「爭奪土地水源及利益」而聚眾鬥毆。", 
+                 "(B) 錯誤。商業競爭不引發大規模民間械鬥。", 
+                 "(C) 錯誤。官吏亂收稅引發的是「民變」。", 
+                 "(D) 錯誤。洋人未大舉侵占引發抗爭。"], 
+                "械鬥公式：爭奪生存資源(地/水) ＋ 祖籍差異 ＝ 結黨鬥毆。");
+
+            addQ("84. 清帝國統治時期的臺灣社會族群複雜,一旦發生糾紛,常以祖籍、姓氏等名義聚眾互相敵對,其中規模較大的武力衝突就有數十次之多。造成上述社會衝突的原因很多,下列何者是主要因素之一?", 
+                ["要求臺灣建省", "對抗外來宗教", "爭奪經濟利益", "抵制鐵路建設"], 
+                2, 
+                ["(A) 錯誤。民間無此政治訴求。", 
+                 "(B) 錯誤。非大規模械鬥主因。", 
+                 "(C) 正確。引文描述的是清代的「分類械鬥」。雖以祖籍名義集結，但點燃衝突的核心實際原因是為了「爭奪經濟利益(田地、水源)」。", 
+                 "(D) 錯誤。鐵路是清末才有。"], 
+                "祖籍差異是藉口，促使械鬥的真正誘因是「爭奪經濟利益」。");
+
+            addQ("<img src='Exam-History-3/p85.jpg' alt='第85題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>85. 附圖描述臺灣史上某一時期的社會現象(清朝統治時期、地域觀念或祖籍意識對抗、爭奪土地水源利益的武力衝突),圖中的「具體例證」,最適合填入下列何者?", 
+                ["地主與官府的對抗", "郊商與洋商的對抗", "士紳與傳教士的衝突", "漳州人與泉州人的衝突"], 
+                3, 
+                ["(A) 錯誤。這是民變性質。", 
+                 "(B) 錯誤。這是商業競爭。", 
+                 "(C) 錯誤。這是教案。", 
+                 "(D) 正確。圖板描述祖籍意識與爭奪資源引發的衝突，即「分類械鬥」。臺灣歷史上最著名的分類械鬥例證就是「漳州人與泉州人的衝突(漳泉械鬥)」。"], 
+                "「不同祖籍對抗」＋「搶地搶水」，最佳代言人是「漳泉械鬥」。");
+
+            addQ("86. 臺灣有句俗諺:「有唐山公、無唐山媽」。這句俗諺反映出當時男女人口比例嚴重失衡的狀況,很多男人成為生活不安定的「羅漢腳」。請問:這種情形應是臺灣史上哪一個時期的社會現象?", 
+                ["鄭氏治臺時期", "清帝國統治時期", "荷治時期", "日本統治時期"], 
+                1, 
+                ["(A) 錯誤。鄭氏時期有帶來部分家眷。", 
+                 "(B) 正確。因為「清帝國統治時期(初期)」實施嚴厲的「渡臺禁令」，規定「不准攜帶家眷」。導致早期社會極度缺乏女性，衍生出大量羅漢腳。", 
+                 "(C) 錯誤。荷治時期無此禁令。", 
+                 "(D) 錯誤。日治時期人口已趨平衡。"], 
+                "「有唐山公無唐山媽」是清初「禁止攜眷」政策留下的證言。");
+
+            addQ("<img src='Exam-History-3/p87.jpg' alt='第87題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>87. 附圖分別是保存在新竹和宜蘭的歷史文物(圖示：新竹進士鄭用錫匾額、宜蘭舉人黃纘緒匾額),根據圖片內容判斷,這些文物與下列何者關係最密切?", 
+                ["清代人才選拔制度的施行", "鄭氏政權對於漢人文化的推廣", "臺灣總督府所實施的教育制度", "荷蘭聯合東印度公司的文教政策"], 
+                0, 
+                ["(A) 正確。圖中出現「進士」、「舉人」匾額，這是中國傳統「科舉考試(人才選拔制度)」的功名。反映了「清帝國統治時期」臺灣子弟透過科舉考取功名。", 
+                 "(B) 錯誤。鄭氏尚未有本土進士。", 
+                 "(C) 錯誤。日本無科舉。", 
+                 "(D) 錯誤。荷蘭無科舉。"], 
+                "「進士、舉人」匾額代表清朝成功推行了「科舉」制度。");
+
+            addQ("88. 「臺灣在戰後再度進入國際貿易市場,海關、領事館等機構正式出現。不僅各國商人可以到通商口岸做買賣,西洋傳教士也能自由進出傳教,馬偕牧師即為著名代表之一。」上述現象發生於臺灣哪一時期?", 
+                ["荷蘭統治時期", "鄭氏統治時期", "清代統治時期", "日本統治時期"], 
+                2, 
+                ["(A) 錯誤。荷蘭時期無各國領事館。", 
+                 "(B) 錯誤。鄭氏無自由傳教。", 
+                 "(C) 正確。引文提到的「海關、領事館、通商口岸、馬偕」，是因為1858年英法聯軍戰敗，臺灣被迫開港通商所帶來的影響，發生在「清代統治時期」後半葉。", 
+                 "(D) 錯誤。日治時期馬偕已離世。"], 
+                "「海關、洋行、馬偕」這組西方元素，是清代「開港通商」後才進入的。");
+
+            addQ("<img src='Exam-History-3/p89.jpg' alt='第89題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>89. 附圖是家玲在臺灣史報告時所使用的圖片(馬偕創設的西醫館在北部淡水、馬雅各創設的西醫館在南部臺南),依圖片內容判斷,報告的主題最可能是下列何者?", 
+                ["荷西統治與南北開發", "臺灣設省與劉銘傳的建設", "開港後的傳教活動與醫療服務", "日本統治時期官方醫療體制的建立"], 
+                2, 
+                ["(A) 錯誤。荷西時期無馬偕、馬雅各。", 
+                 "(B) 錯誤。劉銘傳建設主要是鐵路。", 
+                 "(C) 正確。圖片展示北部的「馬偕」與南部的「馬雅各」設立西醫館。這兩位都是在臺灣「開港後」來臺的傳教士，透過「醫療服務」達成「傳播教義(傳教活動)」目的。", 
+                 "(D) 錯誤。這些是私人教會醫館。"], 
+                "清末傳教士推銷術：「醫療傳道」。用治病來宣揚福音。");
+
+            addQ("90. 在臺灣常可在路邊見到寫著「有應公」的祭祀小廟,這些小廟的由來,主要是在清代,為數眾多的羅漢腳生前孤苦無依,死後無人處理後事,善心人士於是將其屍骨一起收歸埋葬,立廟祭祀。當時造成羅漢腳眾多的主要原因為何?", 
+                ["實施畫界封山", "頒布渡臺禁令", "限制沿海貿易", "控制人口數量"], 
+                1, 
+                ["(A) 錯誤。封山政策不直接產生羅漢腳。", 
+                 "(B) 正確。清代產生單身「羅漢腳」的罪魁禍首是嚴格的「渡臺禁令」。因規定「不准攜帶家眷」，導致男子打光棍，死後無人祭祀催生了有應公廟。", 
+                 "(C) 錯誤。非直接原因。", 
+                 "(D) 錯誤。非主要原因。"], 
+                "「渡臺禁令(禁帶家眷)」 ➜ 產生「羅漢腳」 ➜ 蓋「有應公廟」。");
+
+            addQ("<img src='Exam-History-3/p91.jpg' alt='第91題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>91. 大山老師在複習清代的宗族組織時,繪製階層圖以加深同學印象。同學聽講所抄寫的筆記中,何者有誤?", 
+                ["甲(有血緣關係)", "乙(祭祀來臺的第一代祖先或其後代)", "丙(不同姓者繳交公費即可參與)", "丁(藉此凝聚族群力量)"], 
+                2, 
+                ["(A) 錯誤。開臺祖建立在有真實血緣關係基礎上，筆記無誤。", 
+                 "(B) 錯誤。開臺祖即祭祀來臺第一代祖先，筆記無誤。", 
+                 "(C) 正確(應選)。宗族組織的「開臺祖」絕對是基於血緣與同一祖先，不可能讓「不同姓氏」的人參與祭祀。筆記有誤。", 
+                 "(D) 錯誤。宗族組織具凝聚力量功能，筆記無誤。"], 
+                "宗族組織「開臺祖」必須有真實血緣關係，不可能讓外姓參與。");
+
+            addQ("92. 19世紀時,南部平埔族部分族人進行有計畫的遷徙,越過中央山脈,進入臺東、花蓮一帶發展。下列何者最可能是他們移墾的原因?", 
+                ["因男女比例失衡,漢人強娶平埔族女性為妻", "疫病流行,遷往偏遠地區與漢人避免接觸而減少傳染源", "面對漢人入墾的衝擊,迫使武力不敵的原住民遠走", "傳統的生產方式為漁獵和游耕,導致糧食產量不敷生活所需"], 
+                2, 
+                ["(A) 錯誤。這促成融合，非大遷徙主因。", 
+                 "(B) 錯誤。疫病非主要推力。", 
+                 "(C) 正確。隨漢人入墾搶奪土地，平原的「平埔族」面臨「強大衝擊」與生存空間壓縮，武力不敵下被迫大遷徙，越過高山前往東部。", 
+                 "(D) 錯誤。平埔族已有基礎農耕。"], 
+                "平埔族的大遷徙(如移往花東)，是漢人強勢開墾壓迫下的結果。");
+
+            addQ("93. 清初臺灣的漢人移民之間,械鬥的情形時有所聞,其發生的原因很多,其中應該不包括下列何者?", 
+                ["移民與原住民因宗教信仰而衝突", "單身無職業的男子造成社會不安", "移民為了爭奪土地、水源的開發", "因語言或祖籍的不同而產生隔閡"], 
+                0, 
+                ["(A) 正確(應選)。清代「械鬥」是「漢人移民內部」的衝突。漢人與原住民極少因「宗教信仰」發生大規模戰爭，不包含此項。", 
+                 "(B) 錯誤。羅漢腳確實是械鬥亂源。", 
+                 "(C) 錯誤。爭奪資源是械鬥根本動力。", 
+                 "(D) 錯誤。祖籍不同是表面藉口。"], 
+                "清代械鬥是「漢人打漢人」，絕非為了宗教而打原住民。");
+
+            addQ("94. 歷史課上,同學們在討論馬雅各的事蹟,其中哪一位同學的發言正確?", 
+                ["建立了臺灣第一間西醫醫館", "設立牛津學堂", "以羅馬拼音為原住民創造文字", "於臺灣北部傳播基督教信仰"], 
+                0, 
+                ["(A) 正確。馬雅各在南部(臺南)設立了「看西街醫館」(新樓醫院前身)，這是「臺灣第一間西式醫院」，開創醫療傳道先河。", 
+                 "(B) 錯誤。牛津學堂是馬偕設立的。", 
+                 "(C) 錯誤。創造新港文是荷蘭傳教士。", 
+                 "(D) 錯誤。馬雅各在「南部」。"], 
+                "臺灣西醫始祖：南部的馬雅各。");
+
+            addQ("95. 李阿財在康熙年間單身渡海來臺,認識了來自同家鄉的李阿發,兩人雖然沒有血緣關係,後來結拜為兄弟,成立共同祭祀團體,並且一起努力開墾,在臺灣成家立業。上述兩人組成的祭祀團體最可能是下列何者?", 
+                ["王爺", "開臺祖", "唐山祖", "開漳聖王"], 
+                2, 
+                ["(A) 錯誤。王爺是神明信仰。", 
+                 "(B) 錯誤。開臺祖必須有真實血緣。", 
+                 "(C) 正確。清初渡臺單身漢為求生存，常將「同姓氏」但「沒有血緣關係」的人集結，奉祀原鄉名人的祭祀團體稱為「唐山祖」。", 
+                 "(D) 錯誤。開漳聖王是神明信仰。"], 
+                "「同姓三分親」沒有血緣但同姓結拜的組織，叫「唐山祖」。");
+
+            addQ("96. 沐慈與媽媽利用暑假到鹿港旅遊,看到鹿港有一處隘門...隘門白天開啟,夜晚關閉,只留下一小孔用以監視出入者,兼具境界與防禦的雙重功用。由隘門的設置可以反映出清代臺灣的哪一種現象?", 
+                ["移民來臺的艱辛", "械鬥頻繁的情形", "商業繁榮的現象", "土地開墾的普遍"], 
+                1, 
+                ["(A) 錯誤。隘門功能是防禦非反映渡海。", 
+                 "(B) 正確。在清代臺灣，治安敗壞、「分類械鬥頻繁」。居民為自保，在街區設置「隘門」防範敵對陣營突襲，深刻反映社會動盪。", 
+                 "(C) 錯誤。繁榮不需蓋防禦隘門。", 
+                 "(D) 錯誤。隘門設於市街。"], 
+                "市街裡的「隘門」，是防範械鬥突襲的保命符。");
+
+            addQ("97. 發生於1886年的「大嵙崁事件」,是清帝國為掠奪樟腦資源,派兵入侵泰雅族部落,引發群起反抗,最終泰雅族人歸順投降。上述事件的發生,與當時的統治者實施哪一政策有關?", 
+                ["開港通商", "開山撫番", "劃界封山", "渡臺禁令"], 
+                1, 
+                ["(A) 錯誤。開港通商非派兵入侵政策。", 
+                 "(B) 正確。沈葆楨(及後來的劉銘傳)推行「開山撫番」，主動派軍隊深入山區開發資源(如樟腦)。這嚴重侵犯原住民領域，引發武裝抗爭(如大嵙崁事件)。", 
+                 "(C) 錯誤。劃界封山是不准入山。", 
+                 "(D) 錯誤。渡臺禁令限制漢人來臺。"], 
+                "「開山撫番」的殘酷面：用武力搶奪山區資源(樟腦)壓迫原住民。");
+
+            addQ("98. 18世紀中期,清廷曾下令禁止漢人承租、買賣平埔族群的土地。該項禁令的成效為何?", 
+                ["成功,漢人轉向從事商貿發展", "失敗,漢人繼續巧取豪奪獲得原住民土地", "成功,平埔族到清末依然保有大部分的土地", "失敗,但平埔族透過以物易物等方式買回大量土地"], 
+                1, 
+                ["(A) 錯誤。漢人依然渴求土地。", 
+                 "(B) 正確。儘管官方禁止侵佔，但在官員執法不力及漢人對農田強烈需求下，禁令「宣告失敗」。漢人「繼續巧取豪奪獲得原住民土地」。", 
+                 "(C) 錯誤。平埔族最終失去大部分土地。", 
+                 "(D) 錯誤。平埔族是失去土地的一方。"], 
+                "保護原住民土地的禁令，在漢人拓墾需求下最終失敗。");
+
+            addQ("99. 上歷史課時,同學們提出臺南歷史古蹟考察報告:「在安平看見了德記洋行西式的歷史建築...長老教會在臺南傳教,除了以布道方式傳播福音,更建立臺南神學院...」這是以哪一事件後為主題的報告?", 
+                ["荷蘭佔臺後", "鄭氏政權來臺後", "施琅攻臺後", "英法聯軍後"], 
+                3, 
+                ["(A) 錯誤。荷蘭時期無德記洋行。", 
+                 "(B) 錯誤。鄭氏時期鎖國。", 
+                 "(C) 錯誤。施琅時期無洋行與傳教。", 
+                 "(D) 正確。報告提到「德記洋行」與「長老教會傳教」。外商與傳教士能合法進入臺灣，是因為1858年「英法聯軍」戰敗，清廷被迫「開港通商」。"], 
+                "洋行 ＋ 傳教士 ＝ 英法聯軍戰敗後的「開港通商」。");
+
+            addQ("100. 臺南新樓醫院成立已經一百多年——這家由「臺灣醫療宣教之父」所創立的西醫院,為臺灣帶來西方先進的醫療技術...上文描述的醫師為何人?", 
+                ["馬偕", "郭錫瑠", "鄭用錫", "馬雅各"], 
+                3, 
+                ["(A) 錯誤。馬偕在北部。", 
+                 "(B) 錯誤。郭錫瑠開鑿水圳。", 
+                 "(C) 錯誤。鄭用錫是進士。", 
+                 "(D) 正確。在「臺南」創立第一間西醫院(新樓醫院前身)，被譽為臺灣醫療宣教之父的英國醫生是「馬雅各」。"], 
+                "南部西醫始祖：馬雅各與新樓醫院。");
+
+            addQ("101. 下列有關清帝國時期臺灣文教制度的發展情形何者正確?", 
+                ["臺灣在清帝國治臺初期便獨立舉辦科舉考試", "設立書院的主要目標是教育家境貧寒的子弟", "隨著臺灣日漸開發,人民經濟生活改善,一般人受教育的機會增多", "各地教育機構都是官方所設立的,這是臺灣首次實施義務教育"], 
+                2, 
+                ["(A) 錯誤。初期考生須渡海到福建考試。", 
+                 "(B) 錯誤。書院多培育科舉人才，非專為貧寒子弟。", 
+                 "(C) 正確。隨中後期臺灣「經濟開發改善」，民間有餘力捐資興學，私塾書院增加，「一般人受教育的機會也隨之增多」。", 
+                 "(D) 錯誤。有許多民間私設機構，且無義務教育概念。"], 
+                "經濟好轉(吃飽穿暖)，帶動文教興盛(受教育機會增多)。");
+
+            addQ("102. 清帝國統治時期,漢人不斷越過番界開墾,壓縮原住民的生活空間,常導致對立衝突,最後迫使原住民向他處遷徙。關於原住民族遷徙狀況,何者敘述正確?", 
+                ["原住民遷徙後保留其傳統文化", "部分西拉雅族移往花蓮、臺東", "噶瑪蘭族從花蓮遷徙至宜蘭", "原住民多往北部移動"], 
+                1, 
+                ["(A) 錯誤。遷徙中文化多流失漢化。", 
+                 "(B) 正確。原居西南平原的平埔族(如「西拉雅族」)，因漢人侵墾生存空間壓縮，被迫越過高山「移往東部的花蓮、臺東」。", 
+                 "(C) 錯誤。噶瑪蘭族原本住宜蘭，後移往花東。", 
+                 "(D) 錯誤。多往東部移動。"], 
+                "平埔族的悲歌：土地被搶，被迫往東部(花東)遷徙。");
+
+            addQ("103. 清帝國統治時期,對平埔族群造成不少影響。下列關於平埔社會的變遷,何者敘述錯誤?", 
+                ["部分平埔族人改漢姓", "部分西部平埔族移往埔里盆地", "平埔族兒童學習漢文", "許多平埔族群常與漢人發生武裝衝突"], 
+                3, 
+                ["(A) 正確敘述(不選)。為了融入，許多平埔族人改用漢姓。", 
+                 "(B) 正確敘述(不選)。中部平埔族曾集體遷往埔里盆地。", 
+                 "(C) 正確敘述(不選)。平埔族逐漸漢化，學習漢文。", 
+                 "(D) 錯誤敘述(應選)。平埔族通常較早歸化，面對漢人侵墾多採「退讓、遷徙或漢化」，較少像高山原住民發生長期的激烈武裝衝突。"], 
+                "平埔族面對漢人侵墾的反應多是：漢化或遷徙，極少長期武裝衝突。");
+
+            addQ("104. 彰化平原上曾有一個稱為「七十二庄」的組織,由漳州人和客家人聯合成立,他們透過共同的宗教活動,強化組織內部的連結,以抵抗鄰近泉州人的勢力。上述組織的成立,最可能與下列哪一現象有關?", 
+                ["鄭氏推行軍屯制度", "清代民間械鬥頻傳", "清朝政府開山撫番", "日本鎮壓漢人抗日"], 
+                1, 
+                ["(A) 錯誤。鄭氏軍屯無關祖籍對抗。", 
+                 "(B) 正確。引文提到「漳客聯合...抵抗泉州人」。這種依「祖籍」結黨對抗的現象，正是清代治安敗壞下「民間械鬥頻傳」的產物。居民為自保而成立聯防組織。", 
+                 "(C) 錯誤。開山撫番是對付原住民。", 
+                 "(D) 錯誤。與抗日無關。"], 
+                "看到「漳、泉、客」互相對抗結盟，100%是清代的「分類械鬥」。");
+
+            addQ("105. 清帝國統治時期,臺灣民變與械鬥迭起,社會動盪不安。當時械鬥頻傳,其主要原因最可能為下列何者?", 
+                ["來臺移民爭奪土地水源及利益,因而聚眾結黨鬥毆", "外國商人壟斷經濟大權,郊商難以競爭而爆發衝突", "統治階層濫徵雜稅,官吏因稅收分配不均相互爭鬥", "原住民土地遭到洋人侵占,生活窘困被迫武力抗爭"], 
+                0, 
+                ["(A) 正確。清代的「械鬥」是平民群體的私鬥。爆發的根本原因，是不同背景的移民為「爭奪土地水源及利益」，進而聚眾結黨鬥毆。", 
+                 "(B) 錯誤。這是貿易競爭，不引發流血械鬥。", 
+                 "(C) 錯誤。官吏貪腐引發的是「民變」。", 
+                 "(D) 錯誤。洋人未大舉侵佔土地。"], 
+                "械鬥的公式：經濟利益的衝突（搶地/水）＋ 同鄉情結 ＝ 互砍。");
+
+            addQ("106. 清廷治臺初期,藍鼎元曾向朝廷上書:讓人民都能組織家庭,那麼民間就不會發生這麼多的械鬥與民變事件。這是針對清政府哪一項措施提出的建議?", 
+                ["清理田賦政令", "攜眷渡臺禁令", "劃界封山政策", "對原住民採放任政策"], 
+                1, 
+                ["(A) 錯誤。與家庭組織無關。", 
+                 "(B) 正確。藍鼎元認為若能「組織家庭」，有了妻兒牽絆就不會輕易造反械鬥。這是針對清初造成大量單身羅漢腳的「渡臺禁令(禁止攜眷)」提出的建議。", 
+                 "(C) 錯誤。封山是隔離原漢。", 
+                 "(D) 錯誤。與原住民政策無關。"], 
+                "治亂世藥方：廢除禁帶家眷規定，讓羅漢腳成家，社會就安定。");
+
+            addQ("107. 根據學者所述:「臺灣昔日遊民,非釀亂不可為生。同治以後,有業可執...率趨於都市,以取成倍之利。故百餘年來械鬥之風,至同治以降,一時頓絕。」根據上述判斷,臺灣械鬥之風漸減與何項因素關係最為密切?", 
+                ["清廷施行文教,教化民心", "城市商業熱絡,人民生計改善", "撫剿原住民成功,原住民逐漸漢化", "原住民和漢人逐漸融合,彼此衝突減少"], 
+                1, 
+                ["(A) 錯誤。文教無法立刻解決生計。", 
+                 "(B) 正確。引文指出同治後(開港後)遊民「有業可執」且「趨於都市」。代表開港後「城市商業熱絡，人民生計改善」，不用再為農村資源拚命，因此「械鬥頓絕」。", 
+                 "(C) 錯誤。械鬥是漢人內部衝突。", 
+                 "(D) 錯誤。與原漢融合無關。"], 
+                "消滅械鬥的最佳武器是「經濟繁榮」，有錢賺就不會打架。");
+
+            addQ("108. 臺北艋舺青山宮〈沿革記略〉提到:「咸豐四年,福建惠安縣漁民奉其故鄉青山宮靈安尊王像至艋舺...與此建小廟奉祀...」從上述碑文判斷,青山宮主神的性質與下列何者一致?", 
+                ["土地公", "三山國王", "媽祖", "有應公"], 
+                1, 
+                ["(A) 錯誤。土地公是共同信仰。", 
+                 "(B) 正確。碑文提到「惠安縣漁民奉其故鄉...尊王像」。這代表其為具地域色彩的「原鄉信仰」。選項中客家人的「三山國王」同樣屬於守護特定族群的「原鄉信仰」，性質一致。", 
+                 "(C) 錯誤。媽祖是全體漢人共同信仰。", 
+                 "(D) 錯誤。有應公是祭祀孤魂。"], 
+                "從老家請來的專屬神明叫「原鄉信仰」；大家都拜的叫「共同信仰」。");
+
+            addQ("<img src='Exam-History-3/p109.jpg' alt='第109題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>109. 附圖是一幅有關臺灣漢人移民示意圖(箭頭標示泉州45%、漳州35%、潮州等客家地區16%)。下列敘述,何者正確?", 
+                ["箭頭代表移民方向,顯示嘉南地區多為潮州移民居住", "由圖中可知,漢人移民都來自福建", "箭頭上的數值表示清代移民在臺灣的分布狀況", "箭頭上的數值表示清代泉、漳、客三類移民的比例"], 
+                3, 
+                ["(A) 錯誤。圖中箭頭未特定顯示潮州人住嘉南。", 
+                 "(B) 錯誤。除了福建還有廣東(客家)移民。", 
+                 "(C) 錯誤。數值表示來源地比例，未標示在臺灣的具體分布。", 
+                 "(D) 正確。圖中將移民分為泉州(45%)、漳州(35%)、客家地區(16%)，精準呈現清代這「三類主要移民渡海來臺的人口比例」結構。"], 
+                "清代臺灣漢人人口鐵三角：泉州最多，漳州次之，客家第三。");
+
+            addQ("<img src='Exam-History-3/p110.jpg' alt='第110題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>110. 黃蓉正在閱讀如下有關馬偕牧師的生平資料(1872年來臺宣教...1880年建偕醫館)。馬偕是在何種背景下,來到臺灣從事傳教工作?", 
+                ["清廷開放臺灣港口通商,西方勢力隨之進入臺灣", "清廷為抵制日本侵臺的野心,引進西方勢力與日本抗衡", "國際競爭時期,西方國家在臺灣建立貿易與傳教據點", "鄭氏為突破清廷海禁的封鎖,允許西方國家來臺貿易與傳教"], 
+                0, 
+                ["(A) 正確。馬偕來臺時間(1870年代)正處於英法聯軍戰敗，清廷被迫「開放臺灣港口通商(開港)」之後。開港賦予了西方傳教士合法進入臺灣傳教的權利。", 
+                 "(B) 錯誤。清廷未主動引進傳教士制衡日本。", 
+                 "(C) 錯誤。國際競爭為荷西時期。", 
+                 "(D) 錯誤。鄭氏時期無大規模傳教士進入。"], 
+                "讓西方宗教與醫療合法進入臺灣的鑰匙，就是「開港通商」。");
+
+            addQ("111. 附表是清代臺灣地區科舉人數統計表,由此表可看出,嘉慶、道光時期臺灣考上舉人、進士的人數增多。之所以會出現上述的轉變,主要原因應該是下列何者?", 
+                ["械鬥平息,社會較為安定", "渡臺禁令,禁止攜眷來臺", "洋行林立,帶動讀書風氣", "經濟改善,教育機構增設"], 
+                3, 
+                ["(A) 錯誤。此時期械鬥依然頻繁。", 
+                 "(B) 錯誤。禁令不增加考取人數。", 
+                 "(C) 錯誤。洋行為開港後。", 
+                 "(D) 正確。從康熙到嘉慶、光緒年間，臺灣經歷土地開發「經濟大幅改善」。民間有餘力捐資建立書院等「教育機構」，文風鼎盛，這才是科舉人數增加的根本原因。"], 
+                "肚子吃飽了，才有力氣讀書。科舉人數增加是經濟開發成熟的指標。");
+
+            addQ("<img src='Exam-History-3/p112.jpg' alt='第112題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>112. 小月翻看古地圖(如附圖)時,發現地圖上有兩種不一樣的界線,姐姐跟她解釋,兩種線代表的意義一樣,但實線是後來界線改變後新畫的。兩種界線的改變,代表下列何種情況發生?", 
+                ["番界逐漸向內山地區移動", "茶葉種植從平地向內山地區移動", "平埔族獵場逐漸擴大", "高山原住民生存空間變大"], 
+                0, 
+                ["(A) 正確。圖中界線為清代隔離原漢的「番界」。因漢人人口增加不斷越界侵墾，清廷為反映現狀只好將舊界線(虛線)向東部退讓重新畫線(實線)。代表「番界逐漸向內山地區移動」。", 
+                 "(B) 錯誤。地圖界線改變反映的是整體農墾推進。", 
+                 "(C) 錯誤。平埔族生存空間被壓縮。", 
+                 "(D) 錯誤。高山原住民生存空間變小。"], 
+                "清代番界擋不住漢人開墾，界線一直重畫代表原住民土地一直退縮。");
+            
+            addQ("<img src='Exam-History-3/p113.jpg' alt='題組附圖' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>題組1-(1). 附圖中「○」代表的是各級行政中心,何者是當時臺灣的最高行政單位所在地?", 
+                ["甲", "乙", "丙", "丁"], 
+                0, 
+                ["(A) 正確。圖中甲的位置位於「臺南」地區，在清朝統治臺灣的大部分時期，臺灣的最高行政單位「臺灣府」就是設立在此處。", 
+                 "(B) 錯誤。乙為諸羅或嘉義。", 
+                 "(C) 錯誤。丙為鳳山。", 
+                 "(D) 錯誤。丁為北部港口。"], 
+                "清代臺灣的行政與政治重心，長期設立在南部的「府城(臺南)」。");
+
+            addQ("題組1-(2). 對照現今臺灣行政區的畫分,下列哪一個行政區大部分未被涵蓋在此圖範圍內?", 
+                ["基隆市", "新竹縣", "高雄市", "花蓮縣"], 
+                3, 
+                ["(A) 錯誤。基隆在北部，有被涵蓋。", 
+                 "(B) 錯誤。新竹在西部，有被涵蓋。", 
+                 "(C) 錯誤。高雄在南部，有被涵蓋。", 
+                 "(D) 正確。圖中僅描繪了臺灣的「西半部」，這是因為清代實施劃界封山，未將東部納入版圖。因此位於東部的「花蓮縣」未被涵蓋在圖中。"], 
+                "清朝前期的臺灣地圖，是一張沒有東部(花蓮/臺東)的「半片臺灣」。");
+
+            addQ("題組2-(1). 清帝國統治臺灣大約兩百多年,在這段期間清帝國治臺政策經歷幾次轉變: 清帝國因哪一場戰爭戰敗,被迫開放臺灣港口通商?", 
+                ["鴉片戰爭", "英法聯軍", "清法戰爭", "牡丹社事件"], 
+                1, 
+                ["(A) 錯誤。鴉片戰爭開放五口(不含臺灣)。", 
+                 "(B) 正確。1858年「英法聯軍」之役戰敗，清廷簽訂天津條約，臺灣被迫開放安平、打狗、淡水、雞籠等港口通商。", 
+                 "(C) 錯誤。清法戰爭導致建省。", 
+                 "(D) 錯誤。牡丹社導致開山撫番。"], 
+                "臺灣被迫打開大門迎接洋行與領事館的關鍵：英法聯軍。");
+
+            addQ("題組2-(2). 清廷派沈葆楨來臺經營,治臺政策也轉趨積極,主要原因為何?", 
+                ["礦產開採的需求", "日本侵臺的刺激", "關稅收入的劇增", "臺灣人民的抗議"], 
+                1, 
+                ["(A) 錯誤。非主因。", 
+                 "(B) 正確。1874年「日本出兵侵臺」的牡丹社事件，給予清廷極大刺激，驚覺海防空虛，才派沈葆楨來臺積極建設。", 
+                 "(C) 錯誤。非主因。", 
+                 "(D) 錯誤。非主因。"], 
+                "沈葆楨來臺積極建設的導火線就是日本侵臺(牡丹社事件)。");
+
+            addQ("題組2-(3). 下列哪一事件使清帝國將臺灣的行政層級提升至與福建省相同?", 
+                ["牡丹社事件", "戴潮春事件", "清法戰爭", "甲午戰爭"], 
+                2, 
+                ["(A) 錯誤。牡丹社促成開山撫番。", 
+                 "(B) 錯誤。戴潮春是民變。", 
+                 "(C) 正確。1884年「清法戰爭」戰火延燒臺灣，清廷深刻體認臺灣地位重要，於1885年宣布臺灣建省(與福建省同級)。", 
+                 "(D) 錯誤。甲午戰爭導致割讓。"], 
+                "促成臺灣升格建省的推手：清法戰爭。");
+
+            addQ("<img src='Exam-History-3/p116.jpg' alt='題組附圖' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>題組3-(1). 依據圖的變動(行政區由少變多,甲圖到乙圖多了彰化縣與淡水廳),由甲圖到乙圖的改變原因,主要是因為哪一事件的關係?", 
+                ["朱一貴事件", "林爽文事件", "戴潮春事件", "海盜侵擾蛤仔難"], 
+                0, 
+                ["(A) 正確。甲圖為康熙一府三縣；乙圖為雍正年間，因為爆發了「朱一貴事件」，清廷發覺中部地區管轄不易，因此增設了「彰化縣」與「淡水廳」。", 
+                 "(B) 錯誤。林爽文事件後無此變動。", 
+                 "(C) 錯誤。戴潮春事件晚於此。", 
+                 "(D) 錯誤。海盜侵擾是設噶瑪蘭廳的原因。"], 
+                "雍正年間增設彰化縣與淡水廳的催化劑：朱一貴事件。");
+
+            addQ("題組3-(2). 由乙圖到丙圖行政區劃的改變(多了噶瑪蘭廳),其中是因吳沙率領漢人前往蛤仔難開墾,造成原漢衝突日增,加上何事,清廷因而基於國防考量增設噶瑪蘭廳?", 
+                ["朱一貴事件", "林爽文事件", "戴潮春事件", "海盜侵擾蛤仔難"], 
+                3, 
+                ["(A) 錯誤。引發彰化設縣。", 
+                 "(B) 錯誤。無直接關聯。", 
+                 "(C) 錯誤。晚於此。", 
+                 "(D) 正確。嘉慶年間，除了吳沙開墾外，更因為「海盜(蔡牽)侵擾蛤仔難(宜蘭)」地區，清廷基於國防安全考量，才正式將東部納入版圖，增設「噶瑪蘭廳」(丙圖)。"], 
+                "設立噶瑪蘭廳的兩大原因：吳沙開墾 ＋ 防範海盜侵擾。");
+
+            addQ("<img src='Exam-History-3/p117.jpg' alt='題組附圖' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>題組4-(1). 根據附圖中景點「甲(法軍紀念碑)」、「乙(清代燈塔)」、「丙(西式城堡遺跡/荷蘭人建)」判斷,此觀光手冊最可能是介紹下列何地?", 
+                ["澎湖", "金門", "馬祖", "蘭嶼"], 
+                0, 
+                ["(A) 正確。17世紀初荷蘭人曾佔領「澎湖」(建城堡後被明朝逼退)；清法戰爭時，法軍也曾出兵攻打「澎湖」(留下紀念碑)。綜合這三個歷史遺跡，介紹的地點為澎湖。", 
+                 "(B) 錯誤。金門無此荷蘭/法國遺跡組合。", 
+                 "(C) 錯誤。馬祖無此組合。", 
+                 "(D) 錯誤。蘭嶼無此組合。"], 
+                "澎湖的歷史足跡：荷蘭人蓋城堡被趕走、法軍打過來留紀念碑。");
+
+            addQ("題組4-(2). 關於景點「甲」所介紹的戰役(法軍進犯),法國出兵的主要目的最可能是下列何者?", 
+                ["將臺灣南部納入勢力範圍", "與中國爭奪越南的控制權", "使中國廣開沿海通商口岸", "爭取在華享有領事裁判權"], 
+                1, 
+                ["(A) 錯誤。法軍攻打北部與澎湖。", 
+                 "(B) 正確。景點甲為「法軍將領紀念碑」，指清法戰爭。1884年中國與法國爆發戰爭的最主要根本目的，是為了「爭奪越南的宗主控制權」。", 
+                 "(C) 錯誤。這是英法聯軍目的。", 
+                 "(D) 錯誤。這是鴉片/英法聯軍條約內容。"], 
+                "清法戰爭的源頭不在臺灣，而是在遙遠的「越南」。");
+
+            addQ("題組5-(1). 清帝國某官員曾上書提出:「該地是個土地肥沃、物產豐饒之地。又為東南四省之門戶,具國防之要。加上該地曾經被海盜佔據...」上文中官員所說的「該地」為下列何者?", 
+                ["臺灣", "澎湖", "福建", "海南島"], 
+                0, 
+                ["(A) 正確。引文描述「土地肥沃、東南門戶、曾被海盜佔據」，這是清初官員力陳必須納入版圖的「臺灣」。", 
+                 "(B) 錯誤。澎湖不以物產豐饒著稱。", 
+                 "(C) 錯誤。福建本為清朝領土。", 
+                 "(D) 錯誤。海南島與此爭論無關。"], 
+                "被形容為「土地肥沃、東南門戶」且引發棄留爭議的，就是臺灣。");
+
+            addQ("題組5-(2). 承上題，上文中的官員獨排眾議,認為清帝應該將該地收歸為國土的一部分。該官員最可能為下列何人?", 
+                ["鄭克塽", "林爽文", "朱一貴", "施琅"], 
+                3, 
+                ["(A) 錯誤。鄭克塽是被打敗投降的人。", 
+                 "(B) 錯誤。林爽文是民變領袖。", 
+                 "(C) 錯誤。朱一貴是民變領袖。", 
+                 "(D) 正確。攻下臺灣後，上《恭陳臺灣棄留疏》獨排眾議，強調臺灣經濟與戰略價值，說服康熙皇帝將臺灣留下的清廷官員是「施琅」。"], 
+                "堅持把臺灣留在清朝版圖的關鍵人物：施琅。");
+
+            addQ("題組6-(1). 以下為清帝國後期官員上奏內容:「由於去年倭人假借報仇之名,企圖佔領臺地,朝廷不得已而有開山撫番的措施...」上文提及「去年倭人企圖佔領臺地」,其發生原因與下列何者有關?", 
+                ["朱一貴事件", "林爽文事件", "牡丹社事件", "郭懷一事件"], 
+                2, 
+                ["(A) 錯誤。朱一貴是民變。", 
+                 "(B) 錯誤。林爽文是民變。", 
+                 "(C) 正確。引文中提到「倭人(日本)企圖佔領臺地」，指的正是1874年日本藉口琉球船難發動的「牡丹社事件」。", 
+                 "(D) 錯誤。郭懷一是反荷。"], 
+                "「倭人(日本)佔臺地」並引發開山撫番 ＝ 牡丹社事件。");
+
+            addQ("題組6-(2). 承上題，奏議中提到「眾人皆以為開山是為了撫番,卻不知今日撫番的主要目的,在於防止來自海上的侵犯...朝廷若不將後山一帶收歸治理,必遭外敵侵入...」上述奏議的主旨,最可能是下列何者?", 
+                ["上奏倭人已佔領臺灣後山,建議朝廷應當出兵以收復失土", "強調開山撫番重要性,認為加強治理臺灣才能防外力入侵", "說明倭人與洋人聯手侵臺,假借傳教之名,已經攻陷番地", "觀察洋人在臺活動情形,建議朝廷應全面開港與外國通商"], 
+                1, 
+                ["(A) 錯誤。倭人並未佔領後山。", 
+                 "(B) 正確。官員明確指出撫番(化番為民)主要目的是「防止海上侵犯」，若不將後山(東部)收歸治理必遭外敵入侵。主旨在於「強調開山撫番重要性，加強治理防外力」。", 
+                 "(C) 錯誤。未提及聯手侵臺。", 
+                 "(D) 錯誤。非建議開港通商。"], 
+                "開山撫番不只是為資源，更是為了填補東部國防漏洞，防範列強覬覦。");
+
+            addQ("題組7-(1). 臺灣在18世紀以後,由於商業發展,行郊組織興盛。例如:「泉郊金長順」、「廈郊金振順」等。所謂「泉郊」和「廈郊」是以什麼條件作為區分?", 
+                ["不同的貿易區域", "不同的貿易商品", "同一地區的貿易商", "相同的祖籍"], 
+                0, 
+                ["(A) 正確。「泉郊」代表前往泉州貿易，「廈郊」代表前往廈門貿易。這些名號是以「不同的貿易目標區域」來命名的。", 
+                 "(B) 錯誤。依商品分的是糖郊、布郊。", 
+                 "(C) 錯誤。他們都在同一個臺灣港口。", 
+                 "(D) 錯誤。與祖籍無關。"], 
+                "郊商命名法：用「地名」命名的就是依貿易區域區分。");
+
+            addQ("題組7-(2). 當時的行郊組織不可能出現在清帝國時期的臺灣何地?", 
+                ["臺南", "鹿港", "艋舺", "噶瑪蘭"], 
+                3, 
+                ["(A) 錯誤。臺南(府城)有三郊。", 
+                 "(B) 錯誤。鹿港為一府二鹿之一，有泉郊等。", 
+                 "(C) 錯誤。艋舺為三艋舺，亦有郊商。", 
+                 "(D) 正確。「郊」是經營兩岸貿易的公會，主要集中在西部繁華大港(一府二鹿三艋舺)。「噶瑪蘭(宜蘭)」位於東部，開發晚且非對大陸貿易大港，故不可能出現行郊組織。"], 
+                "郊商只會出現在西部賺大錢的港口(一府二鹿三艋舺)，不會在剛開發的東部。");
+
+            addQ("題組8-(1). 筱筠帶著艾莉絲暢遊臺灣,行程表包含：九份、花蓮十六股、高雄左營、臺南林鳳營、官田七股。她們參訪的地名由來,與下列何者最有關連?", 
+                ["依照地形狀況命名", "沿用音譯的原住民語", "由港口發展成的商業市鎮", "因各時期土地開發而得名"], 
+                3, 
+                ["(A) 錯誤。如左營、九份非地形名。", 
+                 "(B) 錯誤。如營、股、份非原住民語。", 
+                 "(C) 錯誤。如林鳳營非商業港口。", 
+                 "(D) 正確。左營/林鳳營與鄭氏「軍屯(官墾)」開發有關；九份/七股/十六股與清代漢人「合股(合資)開墾」土地有關。皆為因「各時期土地開發」而得名。"], 
+                "有「營、鎮」的代表鄭氏軍隊屯墾；有「股、份」的代表清代合資開墾。");
+
+            addQ("題組8-(2). 附表中的「左營」、「林鳳營」,顯示何種意義?", 
+                ["軍屯配置所在地", "官墾所在之地", "孔廟建設之處", "對外貿易港口"], 
+                0, 
+                ["(A) 正確。帶有「營」、「鎮」字樣的地名(如左營、林鳳營)，是鄭氏政權為解決糧食問題，實施「軍屯制度(派軍隊去種田)」，軍隊駐紮開墾所留下的歷史地名。", 
+                 "(B) 錯誤。官墾是政府招募百姓。", 
+                 "(C) 錯誤。與孔廟無關。", 
+                 "(D) 錯誤。非貿易港。"], 
+                "地名看到「營」字，就是鄭氏政權「軍隊屯墾」的痕跡。");
+
+            addQ("題組8-(3). 附表中「九份」、「七股」、「十六股」等地名的產生,與新竹北埔「金廣福」墾號相同,反映清帝國時期的何種現象?", 
+                ["漢人採合股經營方式拓墾土地", "漢人以武裝暴力搶奪原住民土地", "「墾號」無須向官府申請也能合法拓墾", "漢人向原住民承租,合法取得土地"], 
+                0, 
+                ["(A) 正確。帶有「股」、「份」字樣的地名，以及「金廣福」墾號，都反映了清代開發土地需龐大資金，漢人常採用「合股(合資)經營方式」來共同拓墾土地的歷史現象。", 
+                 "(B) 錯誤。雖然有武裝，但核心是合股。", 
+                 "(C) 錯誤。需申請墾照。", 
+                 "(D) 錯誤。租地不一定產生這些地名。"], 
+                "「股」、「份」、「金廣福」 ＝ 大家出錢一起拼的「合資開墾」。");
+
+            addQ("題組9-(1). 清帝國前期,臺灣在經濟上有長足的進步,蓬勃發展。當時臺灣的對外貿易中,與哪一地區的貿易往來最頻繁?", 
+                ["英國", "荷蘭", "中國大陸", "日本"], 
+                2, 
+                ["(A) 錯誤。開港後才頻繁。", 
+                 "(B) 錯誤。荷蘭已離開。", 
+                 "(C) 正確。清帝國「前期」(開港通商前)，臺灣屬於清朝版圖，對外貿易受到限制，只能透過「郊」商，與「中國大陸」(特別是福建一帶)進行密切的兩岸區域貿易。", 
+                 "(D) 錯誤。日本當時鎖國。"], 
+                "開港通商前，臺灣的生意夥伴只有一個：中國大陸。");
+
+            addQ("題組9-(2). 承上題，從荷治時期到清帝國前期,一直都是臺灣重要的出口商品為何?", 
+                ["樟腦", "茶葉", "鹿皮", "蔗糖"], 
+                3, 
+                ["(A) 錯誤。樟腦是開港後主力。", 
+                 "(B) 錯誤。茶葉是開港後主力。", 
+                 "(C) 錯誤。鹿皮在清代因過度捕獵已非主力。", 
+                 "(D) 正確。「蔗糖」從荷蘭時期就是外銷主力，鄭氏時期繼續發展，到了清帝國前期依然是「郊商」出口至大陸的兩大商品(米、糖)之一。貫穿了三個時期。"], 
+                "跨越荷蘭、鄭氏、清前期的長青不敗商品：蔗糖。");
+
+            addQ("題組10-(1). 1855年,美商詢問是否能在安平貿易。臺灣道裕鐸告知,外國商船直接在安平停泊不符規定,但可私下允許停靠打狗貿易...根據會談結果,當時臺灣對外貿易的情況,最可能是下列何者?", 
+                ["當時臺灣尚未對外開港,裕鐸嚴禁洋商在臺貿易", "當時臺灣尚未對外開港,實際上洋商已來臺貿易", "當時臺灣已經對外開港,洋商可在臺灣各港口貿易", "當時臺灣已經對外開港,裕鐸仍阻撓洋商在臺貿易"], 
+                1, 
+                ["(A) 錯誤。他有私下允許。", 
+                 "(B) 正確。引文時間為「1855年」(英法聯軍前)，當時臺灣「尚未對外開港」。官員表示停泊不符規定，但私下允許在打狗貿易，代表「實際上洋商已來臺貿易」的歷史現實。", 
+                 "(C) 錯誤。開港是1858年。", 
+                 "(D) 錯誤。尚未開港。"], 
+                "條約沒簽(開港)之前，外商早就私底下在南臺灣做起生意了。");
+
+            addQ("題組10-(2). 承上題，數年後新任官員重申外國商船不得在安平起卸貨物。英國商人分析:「這並非刻意禁止,而是因為府城泉州人組成的商人團體去告狀,指控外國商船造成物價上漲影響生意。」重申禁令的原因最可能與下列何者有關?", 
+                ["安平與鹿耳門泥沙淤積,易造成擱淺", "府城商人透過「郊」來維護自身利益", "日本出兵臺灣南部,清帝國提高警戒", "許多府城商人組成「郊」與洋行合作"], 
+                1, 
+                ["(A) 錯誤。引文未提及淤積。", 
+                 "(B) 正確。引文指出是「泉州人組成的商人團體(即泉郊)」跑去告狀，因為外商搶生意。這顯示本土商人透過「郊」這種公會組織，施壓官方來「維護自身的商業利益」。", 
+                 "(C) 錯誤。牡丹社事件在1874年。", 
+                 "(D) 錯誤。他們是競爭關係，非合作。"], 
+                "舊地頭蛇「郊商」為了保護自己飯碗，排擠新來搶生意的外商「洋行」。");
+
+            addQ("題組11-(1). 張福和李祖是清代嘉慶年間分別由福建泉州和廣東東部(粵東)渡海來臺的移民,他們均定居於今宜蘭地區。李家莊供奉的守護神是下列何者?", 
+                ["三山國王", "開漳聖王", "清水祖師", "玄天上帝"], 
+                0, 
+                ["(A) 正確。李祖來自「廣東東部(粵東)」，屬於客家人。客家人最經典的原鄉信仰守護神就是「三山國王」。", 
+                 "(B) 錯誤。開漳聖王是漳州人信仰。", 
+                 "(C) 錯誤。清水祖師是泉州人信仰。", 
+                 "(D) 錯誤。非特定原鄉信仰。"], 
+                "原鄉信仰對應：客家人拜三山國王；漳州拜開漳聖王；泉州拜保生大帝/清水祖師。");
+
+            addQ("題組11-(2). 承上題，張家和李家因農田灌溉水源發生械鬥,應由哪一個縣廳解決?", 
+                ["諸羅縣", "淡水廳", "噶瑪蘭廳", "鳳山縣"], 
+                2, 
+                ["(A) 錯誤。諸羅在中南部。", 
+                 "(B) 錯誤。淡水在西北部。", 
+                 "(C) 正確。題目明確指出他們「定居於今宜蘭地區」，且為「嘉慶」年間。嘉慶年間清廷在宜蘭設立的行政機關就是「噶瑪蘭廳」，因此械鬥歸其管轄。", 
+                 "(D) 錯誤。鳳山在南部。"], 
+                "宜蘭地區的清代行政機關，唯一的答案就是「噶瑪蘭廳」。");
+
+            addQ("<img src='Exam-History-3/p131.jpg' alt='題組附圖' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>題組12-(1). 附圖是「清代臺灣舉人、進士人數統計(人數隨時間大幅上升)」,依據此圖,我們應該如何解讀?", 
+                ["臺灣居民忙於拓墾,文教不發達", "臺灣通過科舉考試人數日少", "臺灣社會文風日漸興盛", "科舉須到北京,士人不願前往"], 
+                2, 
+                ["(A) 錯誤。人數增加代表文教發達。", 
+                 "(B) 錯誤。圖表顯示人數上升。", 
+                 "(C) 正確。圖表清楚顯示，從康熙到嘉慶、光緒年間，臺灣考上舉人與進士的人數呈「倍數成長」。這代表隨著經濟開發穩定，臺灣的教育機構增加，「社會文風日漸興盛」。", 
+                 "(D) 錯誤。與不願前往矛盾。"], 
+                "科舉中榜人數越多，代表該地區經濟越穩定，越有錢讀書(文教興盛)。");
+
+            addQ("題組12-(2). 清代首位考上進士,有「開臺進士」之稱的是何人?", 
+                ["鄭用錫", "沈光文", "郭錫瑠", "施世榜"], 
+                0, 
+                ["(A) 正確。道光年間，新竹人「鄭用錫」考取進士，是第一位臺灣土生土長的進士，被尊稱為「開臺進士」。", 
+                 "(B) 錯誤。沈光文為明鄭時期文人。", 
+                 "(C) 錯誤。郭錫瑠開鑿瑠公圳。", 
+                 "(D) 錯誤。施世榜開鑿八堡圳。"], 
+                "科舉史的里程碑：開臺進士 ＝ 新竹鄭用錫。");
+
+            return qList;
+        };
+
+        let currentTab = 'login';
+        let learnSubTab = 'sec1';
+        let quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+        let isLearnMenuOpen = false;
+
+        const el = id => document.getElementById(id);
+
+        const syncQuestionsFormat = (state) => {
+            if (!state || !state.questions) return state;
+            if (state.questions.length > 0 && !state.questions[0].exps) {
+                const freshQuestions = generate120Questions();
+                state.questions = state.questions.map(oldQ => {
+                    const freshQ = freshQuestions.find(fq => fq.q === oldQ.q);
+                    if (freshQ) return { ...freshQ, showExplanation: oldQ.showExplanation, selectedAns: oldQ.selectedAns, isCorrect: oldQ.isCorrect };
+                    return oldQ;
+                });
+            }
+            return state;
+        };
+
+        window.toggleLearnMenu = (show) => {
+            isLearnMenuOpen = typeof show === 'boolean' ? show : !isLearnMenuOpen;
+            const drawer = el('learn-drawer');
+            const overlay = el('learn-overlay');
+            if(drawer && overlay) {
+                if(isLearnMenuOpen) {
+                    drawer.classList.remove('-translate-x-full');
+                    overlay.classList.remove('hidden');
+                } else {
+                    drawer.classList.add('-translate-x-full');
+                    overlay.classList.add('hidden');
+                }
+            }
+        };
+
+        const listenToGlobalUsers = () => {
+            if (!isFirebaseInitialized || !currentUser) return;
+            const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+            if(unsubscribeGlobal) unsubscribeGlobal();
+            unsubscribeGlobal = onSnapshot(globalRef, (snap) => {
+                if(snap.exists()) recentUsers = snap.data().users || [];
+                else recentUsers = [];
+                if(currentTab === 'login') renderLogin();
+            });
+        };
+
+        const listenToUserDocument = (name) => {
+            if (!isFirebaseInitialized || !currentUser) {
+                loadLocalData(name);
+                return;
+            }
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, name);
+            if(unsubscribeUser) unsubscribeUser();
+            unsubscribeUser = onSnapshot(userRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, data);
+                    saveLocalData(name);
+                    
+                    if (userData.quizState) {
+                        userData.quizState = syncQuestionsFormat(userData.quizState); 
+                        const cloudStateStr = JSON.stringify(userData.quizState);
+                        const localStateStr = JSON.stringify(quizState);
+                        if (cloudStateStr !== localStateStr) {
+                            quizState = userData.quizState;
+                            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, cloudStateStr); } catch(e) {}
+                            if(currentTab === 'quiz') {
+                                let scrollPos = 0;
+                                const scrollContainer = document.getElementById('quiz-scroll-container');
+                                if (scrollContainer) scrollPos = scrollContainer.scrollTop;
+                                renderQuizView(document.getElementById('main-content'));
+                                setTimeout(() => {
+                                    const newScrollContainer = document.getElementById('quiz-scroll-container');
+                                    if (newScrollContainer && scrollPos > 0) newScrollContainer.scrollTop = scrollPos;
+                                }, 10);
+                                const navStats = document.getElementById('nav-quiz-stats');
+                                if (navStats) {
+                                    if (quizState.active) {
+                                        navStats.classList.remove('hidden');
+                                        navStats.classList.add('flex');
+                                        updateQuizStats();
+                                    } else {
+                                        navStats.classList.add('hidden');
+                                        navStats.classList.remove('flex');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [new Date().toISOString()], quizState: null };
+                    setDoc(userRef, userData, { merge: true });
+                }
+                if(currentTab === 'favorites') renderFavorites();
+                else if(currentTab === 'mistakes') renderMistakes();
+                else if(currentTab === 'history') renderHistory();
+            }, (error) => console.error("Listen user error", error));
+        };
+
+        const saveUserDataToCloud = async () => {
+            saveLocalData(username);
+            if (!isFirebaseInitialized || !currentUser || !username) return;
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+            try { await setDoc(userRef, userData, { merge: true }); } catch(e) { console.error("Firebase save error:", e); }
+        };
+
+        const loadLocalData = (name) => {
+            try {
+                const localData = localStorage.getItem(`${COLLECTION_NAME}_${name}_data`);
+                if (localData) userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, JSON.parse(localData));
+            } catch(e) {}
+        };
+
+        const saveLocalData = (name) => {
+            try { if (name) localStorage.setItem(`${COLLECTION_NAME}_${name}_data`, JSON.stringify(userData)); } catch(e) {}
+        };
+
+        const saveQuizState = () => {
+            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e) {}
+            userData.quizState = quizState;
+            saveUserDataToCloud();
+        };
+
+        const loadLocalQuizState = () => {
+            if (userData.quizState) { quizState = syncQuestionsFormat(userData.quizState); return; }
+            try {
+                const localQuiz = localStorage.getItem(`${COLLECTION_NAME}_${username}_quiz`);
+                if (localQuiz) {
+                    const q = JSON.parse(localQuiz);
+                    if (q && q.active) quizState = syncQuestionsFormat(q);
+                }
+            } catch(e) {}
+        };
+
+        const initApp = async () => {
+            renderApp();
+            const lastUser = localStorage.getItem(`${COLLECTION_NAME}_last_user`);
+            if (isFirebaseInitialized) {
+                await initAuth(); 
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUser = user;
+                        listenToGlobalUsers();
+                        if (lastUser) {
+                            username = lastUser;
+                            setTimeout(() => listenToUserDocument(username), 200);
+                            loadLocalQuizState();
+                            renderMain();
+                        } else renderLogin();
+                    } else renderLogin();
+                });
+            } else {
+                if (lastUser) {
+                    username = lastUser;
+                    loadLocalData(username);
+                    loadLocalQuizState();
+                    renderMain();
+                } else renderLogin();
+            }
+        };
+
+        window.handleLogin = async (name) => {
+            if(!name.trim()) {
+                const inputEl = document.getElementById('usernameInput');
+                inputEl.classList.add('border-red-500', 'bg-red-50');
+                inputEl.placeholder = "名稱不能為空！";
+                setTimeout(() => {
+                    inputEl.classList.remove('border-red-500', 'bg-red-50');
+                    inputEl.placeholder = "✍️ 請輸入您的姓名/座號";
+                }, 2000);
+                return;
+            }
+            username = name;
+            localStorage.setItem(`${COLLECTION_NAME}_last_user`, username);
+            if (isFirebaseInitialized && currentUser) {
+                const now = new Date().toISOString();
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                try {
+                    const snap = await getDoc(userRef);
+                    if (snap.exists()) {
+                        userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, snap.data());
+                        if (userData.quizState) {
+                            quizState = syncQuestionsFormat(userData.quizState);
+                            try { localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e){}
+                        }
+                    } else loadLocalData(username);
+                    if (!userData.loginHistory) userData.loginHistory = [];
+                    userData.loginHistory.push(now);
+                    if (userData.loginHistory.length > 50) userData.loginHistory = userData.loginHistory.slice(-50);
+                    await setDoc(userRef, userData, { merge: true });
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const gSnap = await getDoc(globalRef);
+                    let users = gSnap.exists() ? gSnap.data().users || [] : [];
+                    users = users.filter(u => u.name !== username);
+                    users.push({ name: username, lastLogin: now });
+                    if(users.length > 10) users = users.slice(-10);
+                    await setDoc(globalRef, { users }, { merge: true });
+                } catch(e) { console.error("Login data sync error:", e); }
+                listenToUserDocument(username);
+            } else {
+                loadLocalData(username);
+                if (!userData.loginHistory) userData.loginHistory = [];
+                userData.loginHistory.push(new Date().toISOString());
+                saveLocalData(username);
+            }
+            renderMain();
+            initAudio();
+        };
+
+        const renderApp = () => { el('app').innerHTML = `<div id="view-container" class="w-full h-full flex flex-col"></div>`; };
+
+        window.renderLogin = () => {
+            currentTab = 'login';
+            el('view-container').innerHTML = `
+                <div class="flex-1 flex flex-col items-center justify-center relative overflow-hidden p-6 z-0">
+                    <div class="absolute top-6 right-6 z-20">
+                        <div class="flex flex-col items-end gap-3 w-full md:w-auto">
+                            <div class="glass-card px-4 py-2 rounded-full shadow-sm text-sm font-bold text-rose-800 flex items-center border border-rose-200">
+                                <span class="status-dot ${connectionStatus === 'loading' ? 'status-loading' : connectionStatus === 'success' ? 'status-success' : 'status-error'}"></span>
+                                ${connectionStatus === 'loading' ? '雲端讀取中... ⏳' : connectionStatus === 'success' ? '雲端已同步 ☁️✨' : '雲端連線失敗 ❌'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-card p-8 md:p-12 rounded-[2.5rem] shadow-xl z-10 w-[42rem] max-w-[95vw] text-center border-2 border-dashed border-rose-300">
+                        <div class="w-24 h-24 bg-rose-50 rounded-full mx-auto mb-6 flex items-center justify-center shadow-inner border border-rose-100">
+                            <span class="text-6xl">🎒</span>
+                        </div>
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-rose-500 mb-4 tracking-widest leading-tight">歷史會考衝刺<br>🌟</h1>
+                        <p class="text-rose-600 mb-10 text-xl md:text-2xl font-bold bg-rose-50 inline-block px-5 py-2 rounded-full border border-rose-200 shadow-sm">單元3 清帝國時期的台灣 📜</p>
+                        <div class="space-y-6">
+                            <input type="text" id="usernameInput" placeholder="✍️ 點擊這裡輸入名字進入" class="w-full px-6 py-5 text-xl rounded-full border-2 border-rose-200 focus:outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-400/20 text-center transition-all bg-white shadow-inner text-rose-700">
+                            <button onclick="handleLogin(document.getElementById('usernameInput').value)" class="w-full bg-rose-400 hover:bg-rose-500 text-white font-bold py-5 px-6 text-2xl rounded-full shadow-md hover:shadow-lg transition-all transform hover:-translate-y-1">
+                                進入 學習 / 測驗 🚀
+                            </button>
+                        </div>
+                        <div class="mt-10 border-t border-rose-100 pt-6">
+                            <p class="text-base text-rose-400 mb-4 font-bold tracking-wide">☁️ 雲端最近登入 👥</p>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                ${recentUsers.length > 0 ? recentUsers.slice().reverse().slice(0, 8).map(u => `<button onclick="handleLogin('${u.name}')" class="text-base font-bold bg-white border-2 border-rose-100 text-rose-600 hover:bg-rose-50 hover:border-rose-300 px-5 py-2 rounded-full shadow-sm transition-all">${u.name}</button>`).join('') : `<span class="text-base text-rose-400 bg-white/50 px-5 py-2.5 rounded-full border border-rose-100">尚無紀錄或尚未連線</span>`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.renderMain = () => {
+            el('view-container').innerHTML = `
+                <nav class="bg-white/90 backdrop-blur-md border-b-2 border-dashed border-rose-200 shadow-sm z-20 shrink-0">
+                    <div class="w-full px-2 sm:px-4 md:px-6 lg:px-8 mx-auto py-3">
+                        <div class="flex justify-between items-center h-16 w-full overflow-x-auto scrollbar-hide gap-2 md:gap-4">
+                            <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+                                <span class="font-extrabold text-xl md:text-2xl lg:text-xl xl:text-3xl tracking-widest hidden lg:flex items-center shrink-0 text-rose-500 drop-shadow-sm">
+                                    <span class="bg-rose-50 text-rose-600 p-2 rounded-full mr-2 xl:mr-3 shadow-inner border border-rose-100">🎒</span>清帝國時期
+                                </span>
+                                <div class="flex items-center bg-rose-50 px-3 py-1.5 md:px-4 rounded-full border border-rose-200 shadow-sm text-sm md:text-base font-bold shrink-0 text-rose-600">
+                                    <span class="status-dot ${connectionStatus === 'loading' ? 'bg-amber-400' : connectionStatus === 'success' ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                                    <span class="hidden sm:inline">${connectionStatus === 'loading' ? '讀取中' : connectionStatus === 'success' ? '已同步雲端' : '連線失敗'}</span>
+                                </div>
+                                <div id="nav-quiz-stats" class="hidden items-center ml-1 sm:ml-2 animate-fade-in shrink-0 gap-2 md:gap-3">
+                                    <div class="flex items-center bg-white px-3 py-1.5 md:px-4 rounded-full shadow-sm border border-slate-200 text-sm md:text-base font-bold shrink-0 text-slate-700">
+                                        <span class="text-emerald-500 flex items-center"><span class="mr-1">✅</span><span id="nav-stat-correct">0</span></span>
+                                        <div class="w-px bg-slate-200 h-4 md:h-5 mx-2 md:mx-3"></div>
+                                        <span class="text-rose-500 flex items-center"><span class="mr-1">❌</span><span id="nav-stat-incorrect">0</span></span>
+                                    </div>
+                                    <div class="hidden xl:flex flex-col w-24 lg:w-32 shrink-0">
+                                        <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner border border-slate-200">
+                                            <div id="nav-stat-progress-bar" class="bg-rose-400 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center space-x-2 md:space-x-3 shrink-0 pl-1 md:pl-2">
+                                <button onclick="switchTab('learn')" id="nav-learn" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">📚</span>學習</button>
+                                <button onclick="switchTab('quiz')" id="nav-quiz" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">🎯</span>測驗</button>
+                                <button onclick="switchTab('mistakes')" id="nav-mistakes" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">🩹</span>錯題</button>
+                                <button onclick="switchTab('favorites')" id="nav-favorites" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">💖</span>最愛</button>
+                                <button onclick="switchTab('history')" id="nav-history" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">📜</span>紀錄</button>
+                                
+                                <div class="ml-1 sm:ml-2 flex items-center pl-2 sm:pl-3 border-l-2 border-dashed border-rose-200 shrink-0 whitespace-nowrap gap-1 md:gap-2">
+                                    <div class="text-sm md:text-base font-bold bg-rose-50 px-3 py-1.5 md:px-4 md:py-2 rounded-full text-rose-600 border border-rose-200 shadow-sm flex items-center">
+                                        <span class="mr-1 lg:mr-2">👤</span>${username}
+                                    </div>
+                                    <button onclick="deleteUserData()" class="text-rose-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 p-1.5 md:p-2 rounded-full transition-all text-base md:text-lg" title="刪除帳號紀錄">🗑️</button>
+                                    <button onclick="logout()" class="text-rose-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 p-1.5 md:p-2 rounded-full transition-all text-base md:text-lg" title="登出">🚪</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </nav>
+                <div id="main-content" class="flex-1 overflow-hidden flex flex-col w-full z-10 relative"></div>
+            `;
+            switchTab('learn');
+        };
+
+        window.deleteUserData = async () => {
+            if(!confirm(`確定要從雲端刪除選手 ${username} 的所有資料？此操作無法復原！`)) return;
+            if(!confirm(`⚠️ 再次警告：這將永久刪除 ${username} 的所有進度、錯題與紀錄！\n\n您真的確定要執行刪除嗎？`)) return;
+            try {
+                if (isFirebaseInitialized && currentUser) {
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const snap = await getDoc(globalRef);
+                    if(snap.exists()) {
+                        let users = snap.data().users || [];
+                        users = users.filter(u => u.name !== username);
+                        await setDoc(globalRef, { users }, { merge: true });
+                    }
+                    const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                    await setDoc(userRef, { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, { merge: true });
+                }
+                localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_data`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_quiz`);
+                userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+                if(unsubscribeUser) unsubscribeUser();
+                username = '';
+                renderLogin();
+            } catch(e) { alert("刪除失敗，請稍後再試"); }
+        };
+
+        window.logout = () => {
+            username = '';
+            userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+            quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+            localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+            if(unsubscribeUser) unsubscribeUser();
+            renderLogin();
+        };
+
+        window.switchTab = (tab) => {
+            currentTab = tab;
+            const configs = {
+                'learn': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-emerald-400 bg-emerald-500 text-white shadow-md transform scale-105', inactive: 'border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 shadow-sm' },
+                'quiz': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-blue-400 bg-blue-500 text-white shadow-md transform scale-105', inactive: 'border-blue-200 bg-white text-blue-600 hover:bg-blue-50 shadow-sm' },
+                'mistakes': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-amber-400 bg-amber-500 text-white shadow-md transform scale-105', inactive: 'border-amber-200 bg-white text-amber-600 hover:bg-amber-50 shadow-sm' },
+                'favorites': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-rose-400 bg-rose-500 text-white shadow-md transform scale-105', inactive: 'border-rose-200 bg-white text-rose-600 hover:bg-rose-50 shadow-sm' },
+                'history': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-purple-400 bg-purple-500 text-white shadow-md transform scale-105', inactive: 'border-purple-200 bg-white text-purple-600 hover:bg-purple-50 shadow-sm' }
+            };
+
+            Object.keys(configs).forEach(t => {
+                const btn = el(`nav-${t}`);
+                if(btn) {
+                    btn.className = `${configs[t].base} ${t === tab ? configs[t].active : configs[t].inactive}`;
+                }
+            });
+
+            const navStats = el('nav-quiz-stats');
+            if (navStats) {
+                if (tab === 'quiz' && quizState.active) {
+                    navStats.classList.remove('hidden'); navStats.classList.add('flex'); updateQuizStats();
+                } else { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+            }
+            const content = el('main-content');
+            if(tab === 'learn') renderLearnView(content);
+            if(tab === 'quiz') renderQuizView(content);
+            if(tab === 'mistakes') renderMistakes(content);
+            if(tab === 'favorites') renderFavorites(content);
+            if(tab === 'history') renderHistory(content);
+        };
+
+        const renderLearnView = (container) => {
+            const currentData = learnData.find(d => d.id === learnSubTab);
+            const themeColors = {
+                'orange': 'text-orange-600 bg-orange-50 border-orange-200',
+                'teal': 'text-teal-600 bg-teal-50 border-teal-200',
+                'emerald': 'text-emerald-600 bg-emerald-50 border-emerald-200',
+                'purple': 'text-purple-600 bg-purple-50 border-purple-200',
+                'pink': 'text-pink-600 bg-pink-50 border-pink-200',
+                'amber': 'text-amber-600 bg-amber-50 border-amber-200',
+                'rose': 'text-rose-600 bg-rose-50 border-rose-200',
+                'blue': 'text-blue-600 bg-blue-50 border-blue-200'
+            };
+            const activeTheme = currentData && currentData.theme ? themeColors[currentData.theme] : 'text-teal-600 bg-teal-50 border-teal-200';
+
+            container.innerHTML = `
+                <div class="w-full ${activeTheme} border-b-2 border-dashed p-4 flex items-center shadow-sm z-10 shrink-0 overflow-hidden transition-colors duration-300">
+                    <button onclick="toggleLearnMenu(true)" class="text-current hover:opacity-70 focus:outline-none flex items-center px-4 py-2 bg-white rounded-full border border-current shadow-sm mr-4 transition-all">
+                        <i class="fas fa-bars text-xl md:mr-3"></i>
+                        <span class="font-bold text-base md:text-lg hidden md:inline tracking-wide">重點講義目錄</span>
+                    </button>
+                    <span class="font-extrabold text-lg md:text-xl lg:text-2xl truncate drop-shadow-sm" id="current-learn-title">${currentData ? currentData.title : ''}</span>
+                </div>
+                <div id="learn-overlay" onclick="toggleLearnMenu(false)" class="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-30 hidden transition-opacity duration-300"></div>
+                <div id="learn-drawer" class="fixed inset-y-0 left-0 w-[24rem] max-w-[85vw] bg-white border-r-2 border-dashed border-rose-200 z-40 transform -translate-x-full transition-transform duration-300 ease-in-out overflow-y-auto shadow-2xl flex flex-col">
+                    <div class="p-6 bg-rose-50 flex justify-between items-center border-b-2 border-dashed border-rose-200 shrink-0">
+                        <span class="font-extrabold text-xl text-rose-600">📑 學習目錄 🗺️</span>
+                        <button onclick="toggleLearnMenu(false)" class="text-rose-400 hover:text-rose-600 transition-colors bg-white w-10 h-10 rounded-full flex items-center justify-center shadow-sm border border-rose-200"><i class="fas fa-times text-xl"></i></button>
+                        </div>
+                    <ul class="py-4 flex-1 px-3 space-y-2">
+                        ${learnData.map(d => {
+                            const isSelected = learnSubTab === d.id;
+                            const themeConfig = {
+                                'orange': isSelected ? 'bg-orange-500 text-white border-orange-600 shadow-md' : 'text-orange-600 border-orange-200 hover:bg-orange-50',
+                                'teal': isSelected ? 'bg-teal-500 text-white border-teal-600 shadow-md' : 'text-teal-600 border-teal-200 hover:bg-teal-50',
+                                'emerald': isSelected ? 'bg-emerald-500 text-white border-emerald-600 shadow-md' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50',
+                                'purple': isSelected ? 'bg-purple-500 text-white border-purple-600 shadow-md' : 'text-purple-600 border-purple-200 hover:bg-purple-50',
+                                'pink': isSelected ? 'bg-pink-500 text-white border-pink-600 shadow-md' : 'text-pink-600 border-pink-200 hover:bg-pink-50',
+                                'amber': isSelected ? 'bg-amber-500 text-white border-amber-600 shadow-md' : 'text-amber-600 border-amber-200 hover:bg-amber-50',
+                                'rose': isSelected ? 'bg-rose-500 text-white border-rose-600 shadow-md' : 'text-rose-600 border-rose-200 hover:bg-rose-50',
+                                'blue': isSelected ? 'bg-blue-500 text-white border-blue-600 shadow-md' : 'text-blue-600 border-blue-200 hover:bg-blue-50'
+                            };
+                            const activeClass = d.theme ? themeConfig[d.theme] : (isSelected ? 'bg-teal-500 text-white border-teal-600' : 'text-teal-600 border-teal-200');
+                            return `
+                            <li>
+                                <button onclick="selectLearnTab('${d.id}')" id="ltab-${d.id}" class="w-full text-left px-4 py-3 text-base md:text-lg font-bold rounded-full transition-all border-2 ${activeClass}">
+                                    ${d.title}
+                                </button>
+                            </li>
+                        `}).join('')}
+                    </ul>
+                </div>
+                <div class="flex-1 p-4 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden w-full relative z-10" id="learn-content-area"></div>
+            `;
+            renderLearnContent();
+        };
+
+        window.selectLearnTab = (id) => {
+            learnSubTab = id;
+            renderLearnView(el('main-content')); 
+            toggleLearnMenu(false);
+        };
+
+        window.renderLearnContent = () => {
+            const area = el('learn-content-area');
+            if(!area) return;
+            const data = learnData.find(d => d.id === learnSubTab);
+            area.innerHTML = `<div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto animate-fade-in pb-12">${data.content}</div>`;
+        };
+
+        const renderQuizView = (container) => {
+            if(!quizState.active) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 overflow-y-auto relative z-10">
+                        <div class="glass-card p-8 md:p-12 rounded-[2.5rem] shadow-xl text-center max-w-4xl lg:max-w-5xl w-full border-2 border-dashed border-blue-300 relative overflow-hidden bg-white/95">
+                            <div class="w-24 h-24 md:w-32 md:h-32 bg-blue-50 rounded-full mx-auto mb-8 flex items-center justify-center shadow-inner border border-blue-200">
+                                <span class="text-6xl md:text-7xl">🎯</span>
+                            </div>
+                            <h2 class="text-3xl md:text-5xl font-extrabold mb-6 text-blue-600 tracking-wide">單元3 清帝國時期的台灣<br>76題 達人挑戰 🏆</h2>
+                            <p class="text-blue-800/80 mb-10 text-xl md:text-2xl leading-loose">
+                                從消極防臺到積極建省，從械鬥民變到開港通商，驗收您的歷史精熟度！<br>
+                                <span class="bg-blue-100 text-blue-800 font-bold px-5 py-2 rounded-full inline-block mt-6 border border-blue-200 shadow-sm">🌊 瀑布流模式</span><br>
+                                <span class="text-lg md:text-xl text-rose-500 mt-3 block font-bold">🎯 點擊選項後，詳細解析將直接顯示在每個選項框框內，無須滑動對照！</span>
+                            </p>
+                            <button onclick="startQuiz()" class="w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white font-bold py-5 px-16 text-2xl md:text-3xl rounded-full shadow-md transition-all transform hover:-translate-y-1 hover:shadow-lg">
+                                開始挑戰 🚀🔥
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                renderQuizWaterfall(container);
+            }
+        };
+
+        window.startQuiz = () => {
+            initAudio(); 
+            const qList = [...generate120Questions()].map(q => ({
+                ...q, selectedAns: null, showExplanation: false, isCorrect: false
+            }));
+            quizState = { active: true, isFinished: false, questions: qList };
+            saveQuizState();
+            renderQuizView(el('main-content'));
+            const navStats = el('nav-quiz-stats');
+            if (navStats) { navStats.classList.remove('hidden'); navStats.classList.add('flex'); }
+            updateQuizStats();
+        };
+
+        window.updateQuizStats = () => {
+            if (!quizState.active) return;
+            let correct = 0; let incorrect = 0; let answered = 0;
+            const total = quizState.questions.length;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answered++;
+                    if (q.isCorrect) correct++; else incorrect++;
+                }
+            });
+            const progressPercent = (answered / total) * 100;
+            const elCorrect = document.getElementById('nav-stat-correct');
+            const elIncorrect = document.getElementById('nav-stat-incorrect');
+            const elBar = document.getElementById('nav-stat-progress-bar');
+            if (elCorrect) elCorrect.innerText = correct;
+            if (elIncorrect) elIncorrect.innerText = incorrect;
+            if (elBar) elBar.style.width = progressPercent + '%';
+        };
+
+        window.restartQuizWithConfirm = () => {
+            if(confirm('確定要重新開始挑戰嗎？這將會清除目前的畫面，並產生全新的測驗題目！')) startQuiz();
+        };
+
+        const renderQuizWaterfall = (container) => {
+            const total = quizState.questions.length;
+            const isFinished = quizState.isFinished;
+            
+            let headerHtml = isFinished 
+                ? ` <div class="glass-card flex flex-col md:flex-row justify-between items-center rounded-3xl p-5 md:p-6 shadow-md border-2 border-dashed border-teal-300 mb-10 sticky top-0 z-50">
+                        <div class="flex items-center mb-4 md:mb-0">
+                            <span class="text-5xl mr-4 drop-shadow-sm">🏆✨</span>
+                            <div>
+                                <h2 class="text-2xl md:text-3xl font-extrabold text-teal-600">測驗結算完成 🎉</h2>
+                                <p class="text-teal-700 font-bold text-lg mt-1">總分：<span class="text-3xl md:text-4xl text-teal-500 font-black">${quizState.scorePercent}</span> 分 (答對 ${quizState.correctCount} / 共 ${total} 題)</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="switchTab('mistakes')" class="text-base md:text-lg text-amber-600 hover:bg-amber-50 px-4 py-2 rounded-full font-bold transition-colors flex items-center border-2 border-amber-200 bg-white shadow-sm"><span class="mr-2">🩹</span>前往錯題本</button>
+                            <button onclick="restartQuizWithConfirm()" class="text-base md:text-lg text-white bg-teal-500 hover:bg-teal-600 px-4 py-2 rounded-full font-bold transition-colors flex items-center shadow-md"><span class="mr-2">🔄</span>重新挑戰</button>
+                        </div>
+                    </div>`
+                : ` <div class="flex justify-end mb-4">
+                        <button onclick="clearQuizHistory()" class="text-sm md:text-base text-rose-500 hover:text-white hover:bg-rose-400 px-4 py-2 rounded-full font-bold transition-colors flex items-center border-2 border-rose-200 bg-white shadow-sm"><span class="mr-2">🚪</span>放棄作答</button>
+                        </div>`;
+
+            let html = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 scrollbar-hide relative z-10" id="quiz-scroll-container">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto relative">
+                        ${headerHtml}
+                        <div id="questions-list" class="space-y-10 w-full">
+            `;
+            quizState.questions.forEach((_, qIdx) => { html += `<div id="q-block-${qIdx}" class="bg-white rounded-[2rem] shadow-sm overflow-hidden border-2 border-dashed border-blue-200 transition-all w-full p-2">${generateSingleQuestionHtml(qIdx)}</div>`; });
+            html += `</div>`;
+            
+            if (!isFinished) {
+                html += `
+                        <button onclick="finishQuizWaterfall()" class="w-full mt-16 bg-blue-500 hover:bg-blue-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-full shadow-md transition-all transform hover:-translate-y-1 flex items-center justify-center break-words border-b-4 border-blue-700">
+                            🏁 完成測驗並結算成績 📊🎉
+                        </button>`;
+            } else {
+                 html += `
+                        <button onclick="restartQuizWithConfirm()" class="w-full mt-16 bg-teal-500 hover:bg-teal-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-full shadow-md transition-all transform hover:-translate-y-1 flex items-center justify-center break-words border-b-4 border-teal-700">
+                            🔄 重新開始挑戰 🚀💪
+                        </button>`;                
+            }
+            html += `</div></div>`;
+            container.innerHTML = html;
+        };
+
+        const generateSingleQuestionHtml = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            let optionsHtml = '';
+            
+            q.opts.forEach((opt, i) => {
+                let btnClass = "w-full text-left p-3 md:p-4 text-lg md:text-xl rounded-[1.5rem] border-2 transition-all duration-200 flex flex-col items-start group relative overflow-hidden ";
+                let iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-3 md:mr-4 font-extrabold text-lg md:text-xl transition-colors shrink-0 shadow-inner group-hover:bg-blue-100 group-hover:text-blue-700 border border-blue-100">${String.fromCharCode(65+i)}</span>`;
+                
+                let optExpHtml = '';
+                
+                if (!q.showExplanation) {
+                    btnClass += "border-blue-100 hover:border-blue-400 hover:bg-blue-50/50 bg-white cursor-pointer hover:shadow-sm";
+                } else {
+                    let expText = (q.exps && q.exps[i]) ? q.exps[i] : '無詳細解析';
+                    
+                    if (i === q.ans) {
+                        btnClass += "border-emerald-400 bg-emerald-50/50 text-emerald-800 shadow-sm z-10";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center mr-3 md:mr-4 font-bold text-xl md:text-2xl shrink-0 shadow-sm border border-emerald-600">✅</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-emerald-200 bg-white text-emerald-800 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-emerald-600">🎯 解析：</span>${expText}</div>`;
+                    } else if (i === q.selectedAns) {
+                        btnClass += "border-rose-400 bg-rose-50/50 text-rose-800";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-rose-500 text-white flex items-center justify-center mr-3 md:mr-4 font-bold text-xl md:text-2xl shrink-0 shadow-sm border border-rose-600">❌</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-rose-200 bg-white text-rose-800 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-rose-600">💡 解析：</span>${expText}</div>`;
+                    } else {
+                        btnClass += "border-slate-200 bg-slate-50/50 opacity-80 cursor-not-allowed";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center mr-3 md:mr-4 font-extrabold text-lg md:text-xl shrink-0 border border-slate-300">${String.fromCharCode(65+i)}</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-slate-200 bg-white text-slate-600 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-slate-400">💡 解析：</span>${expText}</div>`;
+                    }
+                }
+
+                optionsHtml += `
+                    <button ${q.showExplanation ? 'disabled' : `onclick="answerWaterfallQuestion(${qIdx}, ${i})"`} class="${btnClass}">
+                        <div class="flex items-center w-full">
+                            ${iconHtml}
+                            <span class="flex-1 leading-relaxed break-words z-10 text-left ${q.showExplanation && i === q.ans ? 'text-emerald-700 font-bold' : 'text-slate-700 font-medium'}">${opt}</span>
+                        </div>
+                        ${optExpHtml}
+                    </button>
+                `;
+            });
+
+            let generalExpHtml = '';
+            if (q.showExplanation && q.generalExp) {
+                generalExpHtml = `
+                    <div class="mt-3 p-3 md:p-4 bg-blue-50 border-2 border-dashed border-blue-200 rounded-[1.5rem] relative overflow-hidden animate-fade-in text-left shadow-sm">
+                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-blue-800"><span class="mr-2">📝 重點補充：</span>${q.generalExp}</p>
+                    </div>
+                `;
+            }
+
+            const isFav = userData.favorites && userData.favorites.includes(q.q);
+            const favIconHtml = isFav 
+                ? '<i class="fa-solid fa-heart text-rose-500 drop-shadow-sm"></i>' 
+                : '<i class="fa-regular fa-heart text-slate-300 hover:text-rose-400 drop-shadow-sm"></i>';
+
+            let statusTag = '';
+            let bgGradient = '';
+            if (q.showExplanation) {
+                if (q.selectedAns === q.ans) {
+                    statusTag = '<span class="text-emerald-600 font-bold text-lg md:text-xl flex items-center bg-emerald-50 px-4 py-1.5 rounded-full border border-emerald-200 shadow-sm"><span class="mr-2">✅</span>答對 🎉</span>';
+                    bgGradient = 'bg-emerald-50/30';
+                } else if (q.selectedAns === -1) {
+                    statusTag = '<span class="text-amber-600 font-bold text-lg md:text-xl flex items-center bg-amber-50 px-4 py-1.5 rounded-full border border-amber-200 shadow-sm"><span class="mr-2">⚠️</span>未作答</span>';
+                    bgGradient = 'bg-amber-50/30';
+                } else {
+                    statusTag = '<span class="text-rose-600 font-bold text-lg md:text-xl flex items-center bg-rose-50 px-4 py-1.5 rounded-full border border-rose-200 shadow-sm"><span class="mr-2">❌</span>答錯 💦</span>';
+                    bgGradient = 'bg-rose-50/30';
+                }
+            } else {
+                statusTag = '<span class="text-blue-500 font-bold text-base md:text-lg flex items-center bg-blue-50 px-4 py-1.5 rounded-full border border-blue-200 shadow-sm"><span class="mr-2">✍️</span>作答區</span>';
+                bgGradient = 'bg-white';
+            }
+
+            return `
+                <div class="px-5 md:px-8 py-4 border-b-2 border-dashed border-blue-100 flex justify-between items-center transition-colors rounded-t-[2rem] ${bgGradient}">
+                    <div class="flex items-center">
+                        <span class="font-extrabold text-blue-600 text-lg md:text-xl bg-white px-4 py-1.5 rounded-full border-2 border-blue-200 shadow-sm">🤔 Q ${qIdx + 1}</span>
+                        <button onclick="toggleQuizFavorite(${qIdx})" class="ml-4 text-[1.8rem] md:text-4xl hover:scale-110 transition-transform focus:outline-none" title="加入/取消最愛">
+                            ${favIconHtml}
+                        </button>
+                    </div>
+                    ${statusTag}
+                </div>
+                <div class="p-5 md:p-8 w-full overflow-hidden">
+                    <h3 class="text-xl md:text-2xl font-extrabold text-slate-800 mb-4 leading-relaxed break-words text-left">${q.q}</h3>
+                    <div class="space-y-2 w-full">
+                        ${optionsHtml}
+                    </div>
+                    ${generalExpHtml}
+                </div>
+            `;
+        };
+
+        window.toggleQuizFavorite = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            const qText = q.q;
+            if (!userData.favorites) userData.favorites = [];
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) userData.favorites.splice(idx, 1);
+            else userData.favorites.push(qText);
+            saveUserDataToCloud();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+        };
+
+        window.answerWaterfallQuestion = (qIdx, optIdx) => {
+            const q = quizState.questions[qIdx];
+            if(q.showExplanation) return; 
+
+            const isCorrect = optIdx === q.ans;
+            q.selectedAns = optIdx;
+            q.showExplanation = true;
+            q.isCorrect = isCorrect;
+            
+            if (isCorrect) {
+                playCorrectSound();
+                confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 }, zIndex: 10000, colors: ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'] });
+            } else {
+                playWrongSound();
+                const mistakeId = q.q; 
+                if(!userData.mistakes) userData.mistakes = [];
+                const exists = userData.mistakes.find(m => m.id === mistakeId);
+                if(!exists) {
+                    userData.mistakes.push({
+                        id: mistakeId, q: q.q, opts: q.opts, ans: q.ans, exps: q.exps, generalExp: q.generalExp, time: new Date().toISOString()
+                    });
+                    saveUserDataToCloud();
+                }
+            }
+            saveQuizState();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+            updateQuizStats();
+        };
+
+        window.finishQuizWaterfall = async () => {
+            let correctCount = 0; let answeredCount = 0;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answeredCount++;
+                    if (q.isCorrect) correctCount++;
+                }
+            });
+            if (answeredCount < quizState.questions.length) {
+                if(!confirm(`您還有 ${quizState.questions.length - answeredCount} 題尚未作答，確定要直接交卷結算嗎？未作答的題目將以錯誤計算。`)) return;
+            }
+            quizState.questions.forEach(q => {
+                if (!q.showExplanation) {
+                    q.showExplanation = true; q.isCorrect = false; q.selectedAns = -1;
+                }
+            });
+            quizState.isFinished = true; quizState.correctCount = correctCount; quizState.answeredCount = answeredCount;
+            const total = quizState.questions.length;
+            const scorePercent = Math.round((correctCount / total) * 100);
+            quizState.scorePercent = scorePercent;
+            saveQuizState();
+            
+            if (!userData.quizHistory) userData.quizHistory = [];
+            userData.quizHistory.push({ date: new Date().toLocaleString(), score: scorePercent, total: total, correct: correctCount });
+            if (userData.quizHistory.length > 50) userData.quizHistory = userData.quizHistory.slice(-50);
+            saveUserDataToCloud();
+
+            renderQuizView(document.getElementById('main-content'));
+            confetti({ particleCount: 300, spread: 100, origin: { y: 0.3 }, zIndex: 10000, colors: ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'] });
+            
+            setTimeout(() => {
+                const scrollContainer = document.getElementById('quiz-scroll-container');
+                if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            }, 100);
+        };
+
+        window.clearQuizHistory = () => {
+            if(confirm('警告：確定要清除目前的作答紀錄嗎？\n(此動作將會遺失目前所有測驗進度)')) {
+                if(confirm('【第二次確認】真的要清除作答紀錄並放棄目前測驗嗎？\n按下「確定」將會清空並返回測驗首頁。')) {
+                    quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+                    saveQuizState();
+                    const navStats = document.getElementById('nav-quiz-stats');
+                    if (navStats) { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+                    renderQuizView(document.getElementById('main-content'));
+                }
+            }
+        };
+
+        window.renderMistakes = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.mistakes || userData.mistakes.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-amber-500 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-amber-200 text-7xl">🥳</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-amber-600 mb-4">太棒了！✨</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-amber-500/80">目前沒有任何錯題紀錄 🎉</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-dashed border-amber-200 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-amber-600 flex items-center"><span class="bg-white text-amber-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-amber-200 mr-5 shadow-sm">🩹</span>錯題本 📚</h2>
+                                <p class="text-amber-600/70 mt-3 ml-20 font-bold text-lg md:text-xl">收錄您在測驗中答錯的題目，溫故知新 🔄💡</p>
+                            </div>
+                            <button onclick="clearMistakes()" class="text-base md:text-xl text-amber-500 hover:text-white bg-white hover:bg-amber-400 px-5 py-3 rounded-full border-2 border-amber-200 shadow-sm font-bold transition-all flex items-center shrink-0 mb-2"><span class="mr-2">🗑️</span>清空</button>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${userData.mistakes.map((m, i) => `
+                                <div class="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border-2 border-dashed border-amber-200 w-full overflow-hidden relative group">
+                                    <h3 class="font-extrabold text-slate-800 mb-4 text-xl md:text-2xl break-words leading-relaxed flex items-start text-left">
+                                        <span class="text-amber-500 mr-3 text-xl font-black bg-amber-50 px-4 py-1.5 rounded-full border border-amber-200">🤔 Q</span>${m.q}
+                                    </h3>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 text-lg md:text-xl w-full font-medium text-left">
+                                        ${m.opts.map((opt, idx) => `
+                                            <div class="p-3 md:p-4 rounded-2xl break-words transition-all flex flex-col ${idx === m.ans ? 'bg-emerald-50 text-emerald-800 font-bold border-2 border-emerald-400 shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 font-bold ${idx === m.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === m.ans ? '<span class="ml-2 text-emerald-500 text-xl">✅</span>' : ''}
+                                                </div>
+                                                ${(m.exps && m.exps[idx]) ? `<div class="mt-2 p-2 md:p-3 rounded-xl text-sm md:text-base border ${idx === m.ans ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-white text-slate-600'} leading-normal font-medium"><span class="font-bold mr-2 ${idx === m.ans ? 'text-emerald-600' : 'text-slate-500'}">${idx === m.ans ? '🎯 解析：' : '💡 解析：'}</span>${m.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${m.generalExp ? `
+                                    <div class="mt-3 p-3 md:p-4 bg-amber-50 border-2 border-dashed border-amber-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-amber-800"><span class="mr-2">📝 重點補充：</span>${m.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                            `).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.clearMistakes = () => {
+            if(confirm('警告：確定要清空所有錯題紀錄嗎？\n(此動作無法復原)')) {
+                if(confirm('【第二次確認】真的要徹底清空錯題本嗎？\n按下「確定」將會刪除所有錯題資料。')) {
+                    userData.mistakes = []; saveUserDataToCloud(); renderMistakes();
+                }
+            }
+        };
+
+        window.renderFavorites = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.favorites || userData.favorites.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-rose-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-rose-200 text-7xl">💔</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-rose-500 mb-4">暫無收藏</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-rose-400/80 mb-10">在測驗中點擊愛心圖示即可收藏題目！ 📌✨</p>
+                        <button onclick="switchTab('quiz')" class="bg-rose-400 hover:bg-rose-500 text-white font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            const allQList = generate120Questions();
+            const favQuestions = userData.favorites.map(favText => {
+                return allQList.find(q => q.q === favText) || { q: favText, opts: [], ans: 0, exps: [], generalExp: '題目資料已遺失' };
+            });
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex items-end border-b-4 border-dashed border-rose-200 pb-5 mb-12">
+                            <h2 class="text-4xl md:text-5xl font-extrabold text-rose-500 flex items-center"><span class="bg-white text-rose-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-rose-200 mr-5 shadow-sm">💖</span>我的最愛 🌟</h2>
+                            <p class="text-rose-400/80 mt-3 ml-8 font-bold text-lg md:text-xl hidden sm:block mb-1">您專屬的重點筆記收藏夾 🎒✨</p>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${favQuestions.map((qObj, i) => {
+                                if (qObj.opts.length === 0) return '';
+                                return `
+                                <div class="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border-2 border-dashed border-rose-200 w-full overflow-hidden relative group">
+                                    <div class="flex justify-between items-start mb-6">
+                                        <h3 class="font-extrabold text-slate-800 text-xl md:text-2xl break-words leading-relaxed flex items-start pr-6 flex-1 text-left">
+                                            <span class="text-rose-500 mr-3 text-xl font-black bg-rose-50 px-4 py-1.5 rounded-full border border-rose-200">📌 Q</span>${qObj.q}
+                                        </h3>
+                                        <button onclick="toggleFavoritePage('${qObj.q}')" class="text-[2.2rem] md:text-4xl hover:scale-110 transition-transform shrink-0 mt-1 focus:outline-none" title="移除最愛">
+                                            <i class="fa-solid fa-heart text-rose-400 drop-shadow-sm"></i>
+                                        </button>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 text-lg md:text-xl w-full font-medium text-left">
+                                        ${qObj.opts.map((opt, idx) => `
+                                            <div class="p-3 md:p-4 rounded-2xl break-words transition-all flex flex-col ${idx === qObj.ans ? 'bg-emerald-50 text-emerald-800 font-bold border-2 border-emerald-400 shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 font-bold ${idx === qObj.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === qObj.ans ? '<span class="ml-2 text-emerald-500 text-xl">✅</span>' : ''}
+                                                </div>
+                                                ${(qObj.exps && qObj.exps[idx]) ? `<div class="mt-2 p-2 md:p-3 rounded-xl text-sm md:text-base border ${idx === qObj.ans ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-white text-slate-600'} leading-normal font-medium"><span class="font-bold mr-2 ${idx === qObj.ans ? 'text-emerald-600' : 'text-slate-500'}">${idx === qObj.ans ? '🎯 解析：' : '💡 解析：'}</span>${qObj.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${qObj.generalExp ? `
+                                    <div class="mt-3 p-3 md:p-4 bg-rose-50 border-2 border-dashed border-rose-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-rose-800"><span class="mr-2">📝 重點補充：</span>${qObj.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                                `;
+                            }).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.toggleFavoritePage = (qText) => {
+            if (!userData.favorites) return;
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) {
+                if(confirm('確定要從最愛中移除此題嗎？')) {
+                    userData.favorites.splice(idx, 1);
+                    saveUserDataToCloud();
+                    renderFavorites();
+                }
+            }
+        };
+
+        window.renderHistory = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if((!userData.quizHistory || userData.quizHistory.length === 0) && (!userData.loginHistory || userData.loginHistory.length === 0)) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-purple-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-purple-200 text-7xl">📜</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-purple-500 mb-4">暫無紀錄</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-purple-400/80 mb-10">您還沒有完成任何測驗或留下足跡喔！</p>
+                        <button onclick="switchTab('quiz')" class="bg-purple-400 hover:bg-purple-500 text-white font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-dashed border-purple-200 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-purple-600 flex items-center"><span class="bg-white text-purple-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-purple-200 mr-5 shadow-sm">📜</span>作答與登入紀錄</h2>
+                                <p class="text-purple-500/70 mt-3 ml-20 font-bold text-lg md:text-xl">追蹤您的學習軌跡，跨裝置同步更新 ☁️</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                            <!-- 作答紀錄 -->
+                            <div class="bg-white rounded-[2rem] shadow-sm border-2 border-dashed border-purple-200 overflow-hidden">
+                                <div class="bg-purple-50 p-6 border-b-2 border-dashed border-purple-200">
+                                    <h3 class="text-3xl font-bold text-purple-700 flex items-center"><span class="mr-3 text-3xl">🎯</span>最近作答成績</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-5 max-h-[60vh] overflow-y-auto">
+                                    ${(userData.quizHistory || []).slice().reverse().map((h, i) => `
+                                        <div class="flex justify-between items-center p-5 rounded-2xl border-2 ${h.score >= 80 ? 'bg-emerald-50/50 border-emerald-200' : (h.score < 60 ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50 border-slate-200')} transition-all hover:shadow-sm">
+                                            <div>
+                                                <div class="font-bold text-slate-700 text-xl md:text-2xl">${h.date}</div>
+                                                <div class="text-lg text-slate-500 mt-2 font-medium">共 ${h.total} 題，答對 <span class="font-bold text-slate-600">${h.correct}</span> 題</div>
+                                            </div>
+                                            <div class="text-5xl font-black ${h.score >= 80 ? 'text-emerald-500' : (h.score < 60 ? 'text-rose-500' : 'text-amber-500')}">${h.score}<span class="text-2xl ml-1 font-bold">分</span></div>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-purple-300 text-center py-10 font-bold">目前還沒有測驗紀錄喔</p>'}
+                                </div>
+                            </div>
+
+                            <!-- 登入紀錄 -->
+                            <div class="bg-white rounded-[2rem] shadow-sm border-2 border-dashed border-indigo-200 overflow-hidden h-fit">
+                                <div class="bg-indigo-50 p-6 border-b-2 border-dashed border-indigo-200">
+                                    <h3 class="text-3xl font-bold text-indigo-700 flex items-center"><span class="mr-3 text-3xl">👣</span>最近登入足跡</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-4 max-h-[40vh] overflow-y-auto">
+                                    ${(userData.loginHistory || []).slice().reverse().map((time, i) => `
+                                        <div class="flex items-center p-4 rounded-xl border border-indigo-100 bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                                            <span class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500 mr-4 text-lg font-bold border border-indigo-200">${i+1}</span>
+                                            <span class="font-bold text-slate-600 text-xl">${new Date(time).toLocaleString()}</span>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-indigo-300 text-center py-10 font-bold">無登入紀錄</p>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        initApp();
+
+    </script>
+</body>
+</html>
