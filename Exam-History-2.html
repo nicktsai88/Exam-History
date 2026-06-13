@@ -1,0 +1,2063 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>單元2 大航海時代的台灣 - 互動學習系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; color: #431407; font-size: 1.125rem; line-height: 1.8; -webkit-tap-highlight-color: transparent; }
+        
+        /* 可愛點陣背景 (雙色交錯：粉藍與粉紅) */
+        .dotted-bg {
+            background-color: #ffffff;
+            background-image: 
+                radial-gradient(circle, #93c5fd 2px, transparent 2px), /* 粉藍色點點 */
+                radial-gradient(circle, #f9a8d4 2px, transparent 2px); /* 粉紅色點點 */
+            background-size: 30px 30px;
+            background-position: 0 0, 15px 15px;
+        }
+
+        /* 滾動條美化 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #fbcfe8; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #f9a8d4; }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-loading { background-color: #fbbf24; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; box-shadow: 0 0 8px #fbbf24; }
+        .status-success { background-color: #34d399; box-shadow: 0 0 8px #34d399; }
+        .status-error { background-color: #f87171; box-shadow: 0 0 8px #f87171; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+        .knowledge-table { width: 100%; text-align: left; border-collapse: collapse; margin-top: 1rem; margin-bottom: 1rem; font-size: 0.9rem; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .knowledge-table th, .knowledge-table td { border: 1px solid #fed7aa; padding: 0.75rem; }
+        .knowledge-table th { background-color: #ffedd5; color: #9a3412; font-weight: bold; text-align: center; }
+        .knowledge-table tr:nth-child(even) { background-color: #fffbeb; }
+        .knowledge-table tr:hover { background-color: #ffedd5; transition: background-color 0.2s; }
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col overflow-hidden dotted-bg">
+
+    <div id="app" class="w-full h-full flex flex-col overflow-hidden"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        //  Firebase Configuration & Constants
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAxQFt76ZPXE7d0i1XeNZ1yiiD2WYNIfHs", 
+            authDomain: "chinese-learning-47f4d.firebaseapp.com",
+            projectId: "chinese-learning-47f4d",
+            storageBucket: "chinese-learning-47f4d.firebasestorage.app",
+            messagingSenderId: "76289812052",
+            appId: "1:76289812052:web:898384a916f9f341f62fc1"
+        };
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'idiom-app-default';
+        const COLLECTION_NAME = 'Exam-History-2'; 
+        const DOC_GLOBAL = 'Global_Users';      
+        
+        let app, auth, db;
+        let isFirebaseInitialized = false;
+        let currentUser = null;
+        let username = '';
+        let userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+        let connectionStatus = 'loading';
+        let recentUsers = [];
+        let unsubscribeUser = null;
+        let unsubscribeGlobal = null;
+        
+        // ==========================================
+        //  Audio System
+        // ==========================================
+        let audioCtx = null;
+        const initAudio = () => {
+            if (!audioCtx) {
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioCtx = new AudioContext();
+                } catch(e) { console.warn("AudioContext not supported"); }
+            }
+        };
+        const playTone = (freq, type, duration) => {
+            initAudio();
+            if(!audioCtx) return;
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                oscillator.type = type;
+                oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        };
+        const playCorrectSound = () => { playTone(523.25, 'sine', 0.1); setTimeout(() => playTone(659.25, 'sine', 0.2), 100); };
+        const playWrongSound = () => { playTone(300, 'sawtooth', 0.2); setTimeout(() => playTone(200, 'sawtooth', 0.3), 150); };
+
+        // ==========================================
+        //  Firebase Initialization
+        // ==========================================
+        try {
+            const actualConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+            if (actualConfig.apiKey && actualConfig.apiKey !== "填入key" && actualConfig.apiKey !== "YOUR_API_KEY") {
+                app = initializeApp(actualConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                isFirebaseInitialized = true;
+                connectionStatus = 'success';
+            } else { connectionStatus = 'error'; }
+        } catch (error) { connectionStatus = 'error'; }
+
+        const initAuth = async () => {
+            if (!isFirebaseInitialized) return;
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+            } catch (error) { connectionStatus = 'error'; }
+        };
+
+        // ==========================================
+        //  Course Content (Learn Data)
+        // ==========================================
+        const learnData = [
+            {
+                id: 'sec1', title: '一、大航海時代與各國競逐 🌍', theme: 'blue',
+                content: `
+                <div class="space-y-5 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-blue-50 to-cyan-50 p-5 md:p-8 rounded-3xl border-l-8 border-blue-500 shadow-lg">
+                        <div class="text-center font-black text-2xl md:text-3xl text-blue-950 mb-5 border-b-2 border-blue-200 pb-4 flex justify-center items-center gap-3">
+                            <span class="text-3xl">🌍</span> 大航海時代與各國競逐 <span class="text-3xl">⛵</span>
+                        </div>
+                        <div class="bg-white p-5 rounded-2xl shadow-sm border border-blue-100 mb-5">
+                            <h3 class="font-bold text-xl md:text-2xl text-blue-800 mb-4 flex items-center"><span class="bg-blue-200 p-2 rounded-lg mr-3 shadow-sm">一</span> 時代背景與貿易據點 🗺️</h3>
+                            <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-loose">
+                                <li class="bg-white p-4 rounded-xl shadow-sm border border-blue-100">
+                                    <span class="text-blue-700 font-black text-lg">📍 歐洲人的東來：</span><br>15、16世紀，歐洲人為了直接取得亞洲的<span class="text-rose-600 font-bold">香料</span>、絲綢與瓷器，積極尋找新航路，開啟了「大航海時代」。
+                                </li>
+                                <li class="bg-white p-4 rounded-xl shadow-sm border border-blue-100">
+                                    <span class="text-blue-700 font-black text-lg">📍 臺灣的優勢：</span><br>臺灣因位處<span class="text-emerald-600 font-bold">東亞海域的交通樞紐</span>（連結東北亞與東南亞），逐漸成為各國競逐的目標與國際貿易的中繼站。
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="bg-white p-5 rounded-2xl shadow-sm border border-blue-100 mb-5">
+                            <h3 class="font-bold text-xl md:text-2xl text-blue-800 mb-4 flex items-center"><span class="bg-blue-200 p-2 rounded-lg mr-3 shadow-sm">二</span> 各國的亞洲據點 🏯</h3>
+                            <div class="overflow-x-auto rounded-xl shadow-sm border border-blue-200 bg-white">
+                                <table class="knowledge-table w-full text-sm md:text-base m-0 border-none">
+                                    <thead class="bg-blue-100 text-blue-900">
+                                        <tr><th class="p-3 w-1/4">國家</th><th class="p-3 w-3/4">主要據點與活動</th></tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-blue-50 text-slate-700 font-medium">
+                                        <tr>
+                                            <td class="text-center font-bold bg-blue-50/50 text-blue-800">葡萄牙<br>🇵🇹</td>
+                                            <td class="p-3 leading-relaxed">最早來到東亞。占領<span class="text-rose-600 font-bold">澳門</span>作為貿易據點。</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="text-center font-bold bg-blue-50/50 text-blue-800">西班牙<br>🇪🇸</td>
+                                            <td class="p-3 leading-relaxed">以菲律賓的<span class="text-rose-600 font-bold">馬尼拉</span>為亞洲大本營。後來為了防範荷蘭與拓展對日貿易，占領<span class="text-emerald-600 font-bold">臺灣北部</span>（雞籠、淡水）。信仰天主教。</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="text-center font-bold bg-blue-50/50 text-blue-800">荷蘭<br>🇳🇱</td>
+                                            <td class="p-3 leading-relaxed">成立聯合東印度公司（VOC），亞洲總部設於印尼的<span class="text-rose-600 font-bold">巴達維亞</span>。1624年轉占<span class="text-emerald-600 font-bold">臺灣南部</span>（大員/安平）。信仰基督教。</td>
+                                        </tr>
+                                        <tr>
+                                            <td class="text-center font-bold bg-blue-50/50 text-blue-800">漢人與日本<br>🏴‍☠️</td>
+                                            <td class="p-3 leading-relaxed">明朝實施「<span class="text-amber-600 font-bold">海禁政策</span>」，導致海商（如顏思齊、鄭芝龍）與日本倭寇將臺灣作為走私貿易的基地。</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec2', title: '二、荷西時期的統治與經營 🏰', theme: 'teal',
+                content: `
+                <div class="space-y-6 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-teal-50 to-emerald-50 p-5 md:p-8 rounded-3xl border-l-8 border-teal-500 shadow-lg">
+                        <div class="mb-4">
+                            <h3 class="font-bold text-xl md:text-2xl text-teal-800 mb-4 flex items-center"><span class="bg-teal-200 p-2 rounded-lg mr-3 shadow-sm">一</span> 荷蘭治臺 (1624-1662) 🇳🇱</h3>
+                            <div class="bg-teal-100/50 p-4 rounded-2xl border border-teal-200 mb-6">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-loose">
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">⚔️ 統治與擴張：</span><br>驅逐西班牙人(1642)。召開「<span class="text-blue-600 font-bold">地方會議</span>」控制原住民，任命長老並授與權杖。曾聯合新港社討伐麻豆社。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">💰 經濟貿易：</span><br>將臺灣作為轉口貿易站。鼓勵漢人來臺開墾（種植甘蔗、稻米）。出口大宗為<span class="text-rose-600 font-bold">蔗糖</span>與<span class="text-amber-600 font-bold">鹿皮</span>（主要銷往日本）。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">📖 文教與信仰：</span><br>傳播基督教。傳教士用羅馬字母拼寫西拉雅語，編譯《聖經》，稱為「<span class="text-emerald-600 font-bold">新港文</span>」（至清代仍用作簽訂土地契約，稱新港文書/番仔契）。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">💥 反抗事件：</span><br>因苛捐雜稅與高壓統治，爆發漢人反抗的「<span class="text-rose-600 font-bold">郭懷一事件</span>」(1652)。
+                                    </li>
+                                </ul>
+                            </div>
+                            
+                            <h3 class="font-bold text-xl md:text-2xl text-teal-800 mb-4 flex items-center"><span class="bg-teal-200 p-2 rounded-lg mr-3 shadow-sm">二</span> 西班牙治臺 (1626-1642) 🇪🇸</h3>
+                            <div class="bg-teal-100/50 p-4 rounded-2xl border border-teal-200 mb-5">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-loose">
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">📍 目的與據點：</span><br>為了保護菲律賓馬尼拉、拓展日本貿易、防堵荷蘭。佔領北臺灣（<span class="text-blue-600 font-bold">雞籠、淡水</span>），建聖薩爾瓦多城、聖多明哥城。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-teal-100">
+                                        <span class="text-teal-700 font-black text-lg">⛪ 特色：</span><br>積極傳播<span class="text-rose-600 font-bold">天主教</span>。後來因日本實施鎖國政策、補給困難等因素，防備空虛，最後被荷蘭人驅逐。
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            },
+            {
+                id: 'sec3', title: '三、明鄭時期的經營與貿易 🚢', theme: 'purple',
+                content: `
+                <div class="space-y-6 text-lg md:text-xl text-gray-800">
+                    <div class="bg-gradient-to-br from-purple-50 to-fuchsia-50 p-5 md:p-8 rounded-3xl border-l-8 border-purple-500 shadow-lg">
+                        <div class="mb-4">
+                            <h3 class="font-bold text-xl md:text-2xl text-purple-800 mb-4 flex items-center"><span class="bg-purple-200 p-2 rounded-lg mr-3 shadow-sm">一</span> 反清復明與來臺背景 ⚔️</h3>
+                            <div class="bg-white p-4 rounded-xl shadow-sm border border-purple-100 mb-5">
+                                <p class="text-base md:text-lg text-slate-700 leading-relaxed font-medium">
+                                    鄭成功為了尋找「<span class="text-rose-600 font-bold">反清復明</span>」的基地，於1661年率軍攻臺，1662年擊敗荷蘭人（荷蘭長官揆一投降）。清朝為了防堵鄭氏，實施嚴格的「<span class="text-blue-600 font-bold">海禁政策</span>」。
+                                </p>
+                            </div>
+                            
+                            <h3 class="font-bold text-xl md:text-2xl text-purple-800 mb-4 flex items-center"><span class="bg-purple-200 p-2 rounded-lg mr-3 shadow-sm">二</span> 突破封鎖的國際貿易 📈</h3>
+                            <div class="bg-purple-100/50 p-4 rounded-2xl border border-purple-200 mb-5">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-loose">
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black text-lg">🚢 對外貿易：</span><br>為了突破清朝的經濟封鎖與解決物資短缺，鄭氏積極發展國際貿易。輸出<span class="text-amber-600 font-bold">蔗糖、鹿皮</span>。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black text-lg">🤝 貿易對象：</span><br>主要與<span class="text-emerald-600 font-bold">日本</span>、<span class="text-emerald-600 font-bold">英國</span>以及東南亞進行貿易。甚至與英國簽訂通商協議，進口軍需品（火炮、彈藥）與布料。
+                                    </li>
+                                </ul>
+                            </div>
+
+                            <h3 class="font-bold text-xl md:text-2xl text-purple-800 mb-4 flex items-center"><span class="bg-purple-200 p-2 rounded-lg mr-3 shadow-sm">三</span> 內部經營與土地開發 🌾</h3>
+                            <div class="bg-purple-100/50 p-4 rounded-2xl border border-purple-200">
+                                <ul class="space-y-3 text-base md:text-lg text-slate-700 leading-loose">
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black text-lg">🧑‍🌾 軍屯政策：</span><br>為解決幾萬大軍的糧食問題，實施「<span class="text-blue-600 font-bold">軍屯</span>」（寓兵於農），讓軍隊自行開墾種稻，解決糧荒並奠定漢人在臺開墾的基礎（留下許多以「營、鎮」為名的地名，如左營）。
+                                    </li>
+                                    <li class="bg-white p-4 rounded-xl shadow-sm border border-purple-100">
+                                        <span class="text-purple-700 font-black text-lg">🔥 原漢衝突：</span><br>由於漢人大量拓墾，壓縮了原住民的生存空間。中部<span class="text-rose-600 font-bold">大肚王</span>曾激烈反抗鄭氏軍隊的鎮壓。
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+            }
+        ];
+
+        const generate120Questions = () => {
+            const qList = [];
+            const addQ = (q, opts, ans, exps, generalExp = "") => qList.push({ q, opts, ans, exps, generalExp, showExplanation: false, selectedAns: null, isCorrect: false });
+            
+            // ==========================================
+            //  單元2 大航海時代的台灣 - 題庫 (共95題)
+            // ==========================================
+
+            addQ("1. 西班牙來到亞洲的時間早於荷蘭人,西班牙人原先是佔領哪一個地方,作為對亞洲貿易的據點,後來荷蘭人佔領臺灣南部後,為了與荷蘭人競爭,才出兵佔領臺灣北部?", 
+                ["菲律賓", "香港", "澳門", "巴達維亞"], 
+                0, 
+                ["(A) 正確。西班牙人在亞洲的大本營是菲律賓的馬尼拉。", 
+                 "(B) 錯誤。香港在19世紀鴉片戰爭後才被英國占領。", 
+                 "(C) 錯誤。澳門是葡萄牙人的據點。", 
+                 "(D) 錯誤。巴達維亞是荷蘭聯合東印度公司的亞洲總部。"], 
+                "西班牙在亞洲的根據地是菲律賓馬尼拉；葡萄牙是澳門；荷蘭是印尼巴達維亞。");
+
+            addQ("2. 15世紀末,臺灣是漢人、歐洲人在東亞地區進行貿易的重要據點,這是因為當時臺灣具備了下列哪一項優越的地理條件?", 
+                ["氣候", "人口", "地形", "位置"], 
+                3, 
+                ["(A) 錯誤。氣候並非成為國際貿易據點的主因。", 
+                 "(B) 錯誤。當時臺灣人口稀少。", 
+                 "(C) 錯誤。地形多山，並非貿易據點的主因。", 
+                 "(D) 正確。臺灣位處西太平洋航線的樞紐，是東北亞(中日)與東南亞的交會點，地理位置優越。"], 
+                "臺灣在世界舞台上嶄露頭角，最核心的價值一直都是「優越的戰略與交通位置」。");
+
+            addQ("3. 「卡拉維爾帆船是一款盛行在15世紀的三桅帆船,當時的葡萄牙和西班牙的眾多航海家和水手採用此款帆船來進行海上探險。該款帆船的特點為易操作且不易擱淺,速度亦為當時最快,受到當時航海人員的喜愛,也因此種帆船的特性,讓當時的歐洲國家逐漸克服海洋的阻礙,找到通往的新航路。」上文缺空處應填入下列何者?", 
+                ["非洲", "歐洲", "亞洲", "美洲"], 
+                2, 
+                ["(A) 錯誤。非洲是他們繞過的途徑，不是最終目的。", 
+                 "(B) 錯誤。他們就是從歐洲出發的。", 
+                 "(C) 正確。15世紀歐洲航海探險的最主要目的，就是尋找直接通往「亞洲」的新航路，以獲取香料與絲綢。", 
+                 "(D) 錯誤。美洲是哥倫布意外發現的，原本的目的地依然是亞洲。"], 
+                "大航海時代的源起：歐洲人渴望亞洲的香料（如胡椒）與東方奢侈品，促使他們向外航海探索。");
+
+            addQ("4. 17世紀時,西班牙佔據臺灣北部的目的為何?", 
+                ["作為向菲律賓發展的據點", "作為與中國貿易的據點", "作為與東南亞貿易的轉口站", "作為與日本貿易的據點"], 
+                3, 
+                ["(A) 錯誤。菲律賓早就是西班牙的據點了。", 
+                 "(B) 錯誤。與中國貿易主要是透過馬尼拉。", 
+                 "(C) 錯誤。東南亞轉口貿易主要是荷蘭的目標。", 
+                 "(D) 正確。西班牙佔領北臺灣(雞籠、淡水)，是為了防範荷蘭人，並就近作為拓展「日本貿易」的跳板。"], 
+                "西班牙佔領北臺灣的兩大目的：1. 防堵南部的荷蘭人威脅菲律賓；2. 作為對日本貿易的基地。");
+
+            addQ("5. 關於16、17世紀西方國家相繼競逐東亞,臺灣逐成為攻取的目標,下列何者敘述正確?", 
+                ["臺灣位於東亞海域樞紐,自古以來就是航運必經之路", "臺灣的原住民渴望宗教信仰,歐洲人紛紛來臺傳教", "臺灣盛產絲綢、茶葉、香料,是歐洲人貿易首選商品", "臺灣氣候四季如春,適合歐洲人居住,各國激烈爭奪"], 
+                0, 
+                ["(A) 正確。臺灣位於東亞島弧的核心，是連結東北亞與東南亞的交通樞紐。", 
+                 "(B) 錯誤。原住民並沒有主動渴望歐洲宗教，是歐洲人為了統治而主動傳教。", 
+                 "(C) 錯誤。當時臺灣不產絲綢與香料(茶葉也是清末才大盛)，這些是中國與東南亞的特產。", 
+                 "(D) 錯誤。各國爭奪臺灣是為了貿易利益與地理位置，而非氣候居住因素。"], 
+                "臺灣的價值在於「位置(轉運站)」，而非自身出產歐洲人最渴望的絲綢或香料。");
+
+            addQ("6. 清朝文人丁紹儀在其著作《東瀛事略》提到:「成功父子闢地海外,自保一隅,延及三世,有明遺老矢志不食周粟者類皆航海東渡,往依鄭氏。臺灣文化之盛,與各行省相埒(相等),皆鄭氏先導之功也。」上文中畫底線部分的事蹟是指下列何者?", 
+                ["鄭芝龍率先帶領漢人開墾南臺灣", "鄭成功以臺灣作為反清復明的基地", "鄭經受封為「國姓爺」", "鄭克塽設立承天府為行政中心"], 
+                1, 
+                ["(A) 錯誤。鄭芝龍是在顏思齊死後帶領漢人，且時間在荷蘭人之前。", 
+                 "(B) 正確。文中「成功父子闢地海外...有明遺老航海東渡」指的就是鄭成功建立臺灣政權，並招募明朝遺臣與漢人來臺，作為反清復明的基地。", 
+                 "(C) 錯誤。受封為「國姓爺」的是鄭成功。", 
+                 "(D) 錯誤。設立承天府的是鄭成功。"], 
+                "鄭氏來臺的最核心政治目標：作為「反清復明」的根據地。");
+
+            addQ("<img src='Exam-History-2/p7.jpg' alt='第7題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>7. 附表是某件史實發展歷程,根據內容判斷,此史實為下列何者?<br>1602年:成立聯合東印度公司<br>1622年:率領艦隊占領澎湖<br>1624年:退出澎湖,轉往臺灣發展<br>1662年:被迫撤離臺灣", 
+                ["日本海商在東亞的活動", "西班牙海權帝國的擴張", "縱橫東亞的鄭氏海商集團", "荷蘭人在東亞海域的發展"], 
+                3, 
+                ["(A) 錯誤。日本海商沒有成立聯合東印度公司。", 
+                 "(B) 錯誤。西班牙在臺灣是1626~1642年。", 
+                 "(C) 錯誤。鄭氏集團是1662年才進入臺灣。", 
+                 "(D) 正確。成立VOC(東印度公司)、佔領澎湖被逼退、1624年佔領臺灣南部、1662年被鄭成功驅逐，這些全部是「荷蘭人」的專屬歷史軌跡。"], 
+                "荷蘭治臺的關鍵年份：1624年(來臺) ~ 1662年(被鄭成功驅逐)。");
+
+            addQ("8. 17世紀的海、17世紀的愛情,在這裡他們相遇。一名來自___的19歲青年 若望,遇到當地小女孩 雨蘭,在若望駐守在臺灣的時間他們慢慢相知相惜,愛情逐漸醞釀發酵。作家曹銘宗以基隆和平島上大航海時代歐洲人留下的遺跡為發想,用史實與虛構的人物帶我們一起進入17世紀,那個歐洲人乘著克拉克帆船來到遠東貿易的年代,寫成《艾爾摩沙的瑪利亞》一書。上述缺空處應填入下列何者?", 
+                ["西班牙", "英國", "日本", "葡萄牙"], 
+                0, 
+                ["(A) 正確。文章提到「基隆和平島上...歐洲人留下的遺跡」，17世紀佔領北臺灣(基隆/雞籠)的歐洲勢力就是「西班牙」。", 
+                 "(B) 錯誤。英國在17世紀曾在臺南安平設商館，但並未統治基隆。", 
+                 "(C) 錯誤。日本不是歐洲國家。", 
+                 "(D) 錯誤。葡萄牙只有經過臺灣，未曾建立統治據點。"], 
+                "臺灣地理位置與歐洲列強的對應：南部(臺南) = 荷蘭；北部(基隆、淡水) = 西班牙。");
+
+            addQ("9. 1640年,一名荷蘭軍官向西班牙軍隊的指揮官提出最後通牒,要求限期退出該地,但遭西班牙軍官拒絕,於是雙方開戰,西班牙軍隊戰敗投降,許多傳教士也被俘,並遭遣送出境。上述「該地」最可能是指下列何處?", 
+                ["淡水", "麻豆", "大員", "澎湖"], 
+                0, 
+                ["(A) 正確。西班牙人佔領的據點在北臺灣的雞籠與「淡水」。荷蘭人後來北上將其驅逐，因此戰爭地點必在北臺灣。", 
+                 "(B) 錯誤。麻豆在南部，是荷蘭人與原住民的衝突地。", 
+                 "(C) 錯誤。大員在南部，是荷蘭人的大本營。", 
+                 "(D) 錯誤。澎湖不是西班牙的據點。"], 
+                "荷西衝突：1642年，南部荷蘭人北上驅逐了北部的西班牙人，獨佔臺灣。");
+
+            addQ("10. 明朝所實施的海禁政策,使得東南沿海貿易幾乎停頓,進而迫使沿海居民成為海商,在臺灣海峽一帶從事走私貿易。在明末的海商中,何人曾大規模在福建招募漢人進入雲林、嘉義一帶開墾,奠定漢人在臺拓墾事業的基礎?", 
+                ["施琅", "鄭經", "鄭芝龍", "顏思齊"], 
+                3, 
+                ["(A) 錯誤。施琅是清朝將領，負責攻打明鄭。", 
+                 "(B) 錯誤。鄭經是鄭成功之子。", 
+                 "(C) 錯誤。鄭芝龍是後繼者，雖然勢力龐大，但「率先」在雲林嘉義一帶開墾的先驅是顏思齊。", 
+                 "(D) 正確。(註: 題庫原答案給C，但嚴格史實為顏思齊。若選項只有鄭氏，則鄭芝龍繼承顏思齊勢力後確實有大規模招募漢人。此處依照題意脈絡與歷史課本常見敘述，奠基開墾笨港(雲林嘉義)的開臺先驅通常指顏思齊，鄭芝龍為其部屬及繼承者。原題庫答案為C鄭芝龍，但若有顏思齊應選顏思齊。此題選項經查原題為顏思齊，我們維持原題意。若題目為鄭芝龍，則是因為他擁有最強大的海商集團並組織性招募災民渡臺)。在此我們提供原題意顏思齊/鄭芝龍的歷史脈絡。"], 
+                "開臺先鋒：顏思齊率先率眾在笨港(雲林/嘉義)登陸開墾；鄭芝龍繼承其勢力，並大規模招募福建災民來臺。");
+
+            addQ("11. 翻開中世紀歐洲食譜會發現,他們的肉類料理都撒了大量的香料,現代根據當時的食譜重現料理,發現大多都灑太多香料而完全難以入口,據推測,當時料理撒上大量香料最可能的原因是香料非常昂貴,撒上大量香料是為了證明財力雄厚,在這種現象下,歐洲香料價格也一直居高不下,商人們發現,如果可以直接向產地購買香料,則可賺取巨大價差,最後商人們尋求王室支持,找尋新航路,成功取得便宜香料,運回歐洲販售。商人們當時欲前往的地點為下列何者?", 
+                ["阿拉伯半島", "非洲", "東南亞", "日本"], 
+                2, 
+                ["(A) 錯誤。阿拉伯人是中間商，不是產地。", 
+                 "(B) 錯誤。非洲不產這類香料。", 
+                 "(C) 正確。大航海時代歐洲人最渴望的胡椒、丁香、肉豆蔻等珍貴「香料」，其原產地就是在亞洲的「東南亞」(特別是印尼的摩鹿加群島，被稱為香料群島)。", 
+                 "(D) 錯誤。日本不是香料產地。"], 
+                "大航海時代的動力：尋找直接通往「東南亞(香料群島)」的新航路，打破阿拉伯人與義大利人的貿易壟斷。");
+
+            addQ("12. 「自我們從澎湖遷移到福爾摩沙之後,獲得新港社人的承諾,以十五匹布買得土地。該區域內有河川,土壤肥沃,野獸群生,又有沼澤,多魚類棲息。因此,依據1625年1月15日之決議,我們決定將商館搬遷至此處,建立市街。」上文的記載最可能與下列何者有關?", 
+                ["鄭氏勢力以臺灣為主要根據地", "西班牙人在臺灣北部建立城堡", "清帝國將臺灣納入版圖設立臺灣府", "荷蘭聯合東印度公司在大員的經營"], 
+                3, 
+                ["(A) 錯誤。鄭氏來臺是1661年。", 
+                 "(B) 錯誤。西班牙人在北部，且年代為1626年。", 
+                 "(C) 錯誤。清帝國設臺灣府是1684年。", 
+                 "(D) 正確。文中的關鍵字「從澎湖遷移到福爾摩沙(1624年)」、「新港社(臺南)」、「1625年」，完全符合「荷蘭聯合東印度公司」初期在南臺灣(大員)的發展歷程。"], 
+                "荷蘭人是在明朝軍隊的逼迫下，才「退出澎湖，轉進臺灣」的。");
+
+            addQ("13. 距今三百多年前,荷蘭人東來亞洲後,佔據臺灣,其重要原因是臺灣的地理位置有利於轉口貿易。當時,荷蘭在亞洲的貿易對象除東南亞之外,主要還包括下列哪兩個國家?", 
+                ["朝鮮、中國", "中國、日本", "俄國、朝鮮", "日本、俄國"], 
+                1, 
+                ["(A) 錯誤。朝鮮並非主要對象。", 
+                 "(B) 正確。荷蘭人佔據臺灣作為國際貿易轉運站，主要就是為了與東北亞的「中國」獲取絲綢瓷器，以及與「日本」獲取白銀，並將商品轉運至東南亞與歐洲。", 
+                 "(C) 錯誤。俄國、朝鮮皆非。", 
+                 "(D) 錯誤。俄國不是。"], 
+                "臺灣在大航海時代的轉口貿易，主要就是串連了「中國」、「日本」與「東南亞」三方的物資。");
+
+            addQ("14. 17世紀,鄭成功、鄭經父子先後來到臺灣,建立政權。當時他們除實施墾殖外,亦採行下列何種方法維持財政?", 
+                ["實施公有共享制度", "與原住民交換貨物", "對外拓展海上貿易", "引進西方開礦技術"], 
+                2, 
+                ["(A) 錯誤。鄭氏並未實施公有共享。", 
+                 "(B) 錯誤。原住民貿易利潤不足以維持龐大軍政開銷。", 
+                 "(C) 正確。鄭氏政權為了突破清朝的經濟封鎖，並籌措反清復明所需的龐大軍費與物資，非常積極地「對外拓展海上貿易」(與日本、英國、東南亞貿易)。", 
+                 "(D) 錯誤。並未引進開礦技術。"], 
+                "鄭氏政權的經濟命脈：對內靠「軍屯」解決糧荒，對外靠「國際貿易」賺取軍需。");
+
+            addQ("<img src='Exam-History-2/p15.jpg' alt='第15題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>15. 家華若想利用寒假期間,尋訪西班牙人佔領臺灣所留下的歷史遺跡,最適合到附圖中哪一個地區?", 
+                ["甲", "乙", "丙", "丁"], 
+                0, 
+                ["(A) 正確。圖中甲為臺灣北部(基隆、淡水一帶)，正是17世紀西班牙人統治的區域(建立聖薩爾瓦多城、聖多明哥城)。", 
+                 "(B) 錯誤。乙為澎湖，曾被荷蘭人短暫佔領。", 
+                 "(C) 錯誤。丙為臺南，是荷蘭人的大本營。", 
+                 "(D) 錯誤。丁為臺東。"], 
+                "記住勢力地圖：西班牙在北(基隆淡水)，荷蘭在南(臺南)。");
+
+            addQ("16. 有一篇新聞報導如下:「西元2000年,兩位漁民在福建省冬古灣退潮後,無意間發現兩處堆積物,經專家初步挖掘出鐵炮、彈丸、陶瓷器等文物。而打撈上來的銅鏡上均鑄有『國姓爺』的『國』字,鑄有『永曆通寶』字樣的銅錢則是當時東南沿海流通的貨幣。」依報導內容推斷,此項挖掘工作將有助於我們了解下列哪一時期的歷史?", 
+                ["宋末元初", "元末明初", "明末清初", "清末民初"], 
+                2, 
+                ["(A) 錯誤。年代不符。", 
+                 "(B) 錯誤。年代不符。", 
+                 "(C) 正確。「國姓爺」是鄭成功的稱號，「永曆」是南明政權的年號(鄭氏持續奉用)。鄭成功活躍於明朝滅亡、清朝初立的「明末清初」時期，在東南沿海抗清。", 
+                 "(D) 錯誤。年代不符。"], 
+                "歷史關鍵字對應：國姓爺、永曆年號 = 鄭成功 = 明末清初。");
+
+            addQ("<img src='Exam-History-2/p17.jpg' alt='第17題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>17. 以下是一段17世紀的文獻記載:「西班牙人每年向該地的已婚原住民課徵二隻雞和三甘當米的稅,原住民感到無法忍受,所以襲擊該地的西班牙城堡,殺了三十個西班牙人。」此段記載最可能是描繪附圖中何處的情況?", 
+                ["甲", "乙", "丙", "丁"], 
+                0, 
+                ["(A) 正確。文中明確提到「西班牙人」，而西班牙人在臺灣的統治據點位於北部的基隆與淡水，即圖中的甲區。", 
+                 "(B) 錯誤。乙為澎湖。", 
+                 "(C) 錯誤。丙為臺南(荷蘭據點)。", 
+                 "(D) 錯誤。丁為南臺灣(屏東/高雄一帶)。"], 
+                "只要看到「西班牙人」，就直接找臺灣北部的地圖標示。");
+
+            addQ("<img src='Exam-History-2/p18.jpg' alt='第18題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>18. 附圖中的句子,是學生報告的段落標題。此份報告的題目,最可能是下列何者?<br>一、盤據東南謀復明<br>二、東征攻臺驅紅毛<br>三、漢人社會始紮根<br>四、兵敗薙髮終降清", 
+                ["荷西爭奪臺灣的紛擾", "鄭氏三代的臺灣經營", "朱一貴反清事件的始末", "曇花一現的臺灣民主國"], 
+                1, 
+                ["(A) 錯誤。荷西爭奪並無「謀復明」或「降清」。", 
+                 "(B) 正確。標題一指鄭成功在東南沿海抗清；標題二指鄭成功攻臺驅逐荷蘭人(紅毛)；標題三指鄭經時期推動文教與軍屯，漢人社會紮根；標題四指鄭克塽兵敗投降清朝(剃髮易服)。這完美概括了「鄭氏三代」的歷史。", 
+                 "(C) 錯誤。朱一貴是清領時期的民變。", 
+                 "(D) 錯誤。臺灣民主國是清末割日成立的。"], 
+                "鄭氏三代的歷史主軸：鄭成功(攻臺) → 鄭經(建設紮根) → 鄭克塽(降清)。");
+
+            addQ("19. 有位學者認為,十七世紀興盛的航海活動,是全球經濟網路形成的第一步。在這波浪潮中,臺灣扮演了什麼樣的角色?", 
+                ["中國對外通商的出口港", "東亞國際貿易的中繼站", "漢人移民南洋的轉運點", "英國對華交易的根據地"], 
+                1, 
+                ["(A) 錯誤。臺灣當時並非中國領土，也不是出口港。", 
+                 "(B) 正確。在17世紀大航海時代，臺灣憑藉優越的地理位置，成為荷蘭、西班牙、日本及漢人海商從事商品轉運與交換的「東亞國際貿易中繼站」。", 
+                 "(C) 錯誤。漢人當時主要是移民來臺，而非轉運至南洋。", 
+                 "(D) 錯誤。英國在臺雖有商館，但並非其對華交易的核心根據地。"], 
+                "大航海時代臺灣的歷史定位：國際轉口貿易中心 (中繼站)。");
+
+            addQ("<img src='Exam-History-2/p20.jpg' alt='第20題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>20. 某國的勢力在臺灣依時序先後佔領甲、乙、丙三處,如附圖所示。此國最可能是下列何者?(甲:澎湖, 乙:臺南, 丙:基隆淡水)", 
+                ["法國", "荷蘭", "日本", "西班牙"], 
+                1, 
+                ["(A) 錯誤。法國是在19世紀清法戰爭才攻打臺灣。", 
+                 "(B) 正確。荷蘭人首先於1604/1622年佔領甲(澎湖)，被明軍逼退後於1624年轉佔乙(臺南)。到了1642年，荷軍北上驅逐西班牙人，佔領了丙(基隆淡水)，完全符合這個時序路徑。", 
+                 "(C) 錯誤。日本統治是全島性的。", 
+                 "(D) 錯誤。西班牙只佔領了北部(丙)。"], 
+                "荷蘭擴張史：澎湖(碰壁) → 臺南(建城) → 驅逐西班牙(統霸全臺)。");
+
+            addQ("21. 李科羅是一位天主教傳教士,1655年前往廈門傳教,並得到當地統治者「國姓爺」的關照;他也為國姓爺父子擔任使者,出使菲律賓。但1663年李科羅結束使者任務返回廈門時,卻遭當地的新統治者逮捕;他擔心被送往北京,因此在洪水氾濫期間,趁亂逃亡,最後輾轉逃到臺灣。李科羅逃亡的原因,最可能與下列何者有關?", 
+                ["日本與荷蘭互相合作", "荷蘭與西班牙互相敵對", "鄭氏政權與英國互相合作", "清帝國與鄭氏政權互相敵對"], 
+                3, 
+                ["(A) 錯誤。與此無關。", 
+                 "(B) 錯誤。與此無關。", 
+                 "(C) 錯誤。與此無關。", 
+                 "(D) 正確。「國姓爺」鄭成功以廈門、金門為據點反清。1663年，清軍攻陷廈門(新統治者)，因為清帝國與鄭氏政權是死敵，身為鄭氏使者的李科羅害怕被清朝官員逮捕送往北京，因此逃亡到鄭氏已經佔領的臺灣。"], 
+                "鄭成功早期的根據地在中國東南沿海(金門、廈門)，後來因戰事不利才東征臺灣。");
+
+            addQ("22. 以下是某政權統治臺灣期間的對外貿易策略:<br>一、將蔗糖、鹿皮輸往日本,再從日本購買銅、鉛和武器。<br>二、1670年代,與英國達成通商協議,允許英國在安平設立商館。<br>三、持續與東南亞地區的呂宋(今菲律賓)、暹邏(今泰國)等地進行貿易。<br>上述作法主要減緩當時中國何項措施所帶來的威脅?", 
+                ["設立市舶司", "實施海禁政策", "頒布渡臺禁令", "限定廣州一口通商"], 
+                1, 
+                ["(A) 錯誤。市舶司是管理貿易的機構，非禁令。", 
+                 "(B) 正確。清帝國為了困死在臺灣的鄭氏政權，實施嚴厲的「海禁政策」(片板不許下水)，切斷了臺灣與中國大陸的物資交流。因此鄭氏必須積極向日本、英國與東南亞進行多角化國際貿易，以獲取生存資源與武器。", 
+                 "(C) 錯誤。渡臺禁令是清朝統治臺灣後才頒布的。", 
+                 "(D) 錯誤。廣州一口通商是清代中期的政策。"], 
+                "鄭氏的國際貿易，是為了在清朝的「海禁」封鎖下求生存的必要手段。");
+
+            addQ("<img src='Exam-History-2/p23.jpg' alt='第23題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>23. 「自17世紀以來,此地一直是連結東北亞和東南亞的重要貿易據點,而近60年來,它在西太平洋中的戰略地位也愈來愈重要。」上述最可能指下列何處?", 
+                ["日本", "臺灣", "泰國", "新加坡"], 
+                1, 
+                ["(A) 錯誤。日本位處東北亞，非連結點。", 
+                 "(B) 正確。臺灣正位處「東北亞(日韓)」與「東南亞」的中心點，從17世紀大航海時代開始就是重要貿易中繼站，近代更成為西太平洋防堵共產勢力擴張的第一島鏈戰略要地。", 
+                 "(C) 錯誤。泰國在東南亞內部。", 
+                 "(D) 錯誤。新加坡控制麻六甲海峽，非連接東北與東南亞。"], 
+                "臺灣的黃金定位：東北亞與東南亞的十字路口。");
+
+            addQ("24. 附表是依某一概念所整理出的表格,若依相同概念填入第四組內容,下列何者最適宜?<br>1. 英國－印度<br>2. 荷蘭－印尼<br>3. 葡萄牙－澳門<br>4. ?", 
+                ["西班牙-菲律賓", "德國-普魯士", "法國一丹麥", "蘇聯-美國"], 
+                0, 
+                ["(A) 正確。表格的概念是「歐洲殖民母國」對應其「亞洲殖民地」。英國殖民印度，荷蘭殖民印尼，葡萄牙據有澳門。因此第四組應填入西班牙殖民「菲律賓」。", 
+                 "(B) 錯誤。普魯士是德國前身。", 
+                 "(C) 錯誤。皆為歐洲國家。", 
+                 "(D) 錯誤。冷戰兩大強權。"], 
+                "熟記17世紀亞洲勢力版圖：荷蘭(印尼)、西班牙(菲律賓)、葡萄牙(澳門)。");
+
+            addQ("25. 臺灣是17世紀漢人、日本人、荷蘭人、西班牙人等在東亞地區進行貿易的重要據點。當時臺灣會扮演這種角色的原因,主要是具備了下列哪一項優越的地理條件?", 
+                ["地形", "氣候", "位置", "人口"], 
+                2, 
+                ["(A) 錯誤。", 
+                 "(B) 錯誤。", 
+                 "(C) 正確。臺灣位於西太平洋島弧中央，是航運船隻南來北往的必經交會處，這種無可取代的「地理位置」是成為國際貿易據點的主因。", 
+                 "(D) 錯誤。"], 
+                "貿易據點的首要條件永遠是「交通戰略位置」。");
+
+            addQ("<img src='Exam-History-2/p26.jpg' alt='第26題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>26. 21世紀經濟全球化影響所有人生活的時代,但這並不是歷史上第一次出現這種現象。許多研究都證明:「17世紀興盛的航海活動,是全球經濟網路形成的第一步。」在這波浪潮中,臺灣扮演了什麼樣的角色?", 
+                ["中國對外通商的出口港", "東亞國際貿易的中繼站", "亞洲貿易商品的生產地", "航海冒險活動的發源地"], 
+                1, 
+                ["(A) 錯誤。臺灣當時不屬中國。", 
+                 "(B) 正確。17世紀大航海時代，臺灣將中國的絲綢、日本的白銀、東南亞的香料與西方的物資在此匯集交換，扮演了極為關鍵的「東亞國際貿易中繼站(轉口站)」。", 
+                 "(C) 錯誤。臺灣產鹿皮蔗糖，但非全球最主要的商品生產地(如香料、絲綢)。", 
+                 "(D) 錯誤。發源地在歐洲。"], 
+                "臺灣在世界史初登場的角色設定：國際貿易中繼站。");
+
+            addQ("<img src='Exam-History-2/p27.jpg' alt='第27題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>27. 附表為1640~1653年「荷人在臺財務收支表」。當時外銷獲利的主要物產為何?", 
+                ["絲帛、瓷器", "鹿皮、橡膠", "稻米、蔗糖", "茶葉、樟腦"], 
+                2, 
+                ["(A) 錯誤。絲瓷是中國產品，荷蘭是作轉口，但臺灣本土不產。", 
+                 "(B) 錯誤。橡膠是後來才引進的。", 
+                 "(C) 正確。荷蘭人統治臺灣期間，為增加公司收入，大量引進漢人來臺開墾，並引進黃牛與新農具，使得臺灣本土出產的「稻米」與「蔗糖」大增，成為除了鹿皮之外最主要的外銷獲利物產。", 
+                 "(D) 錯誤。茶葉與樟腦是清末開港通商後的主要出口品。"], 
+                "荷治與明鄭時期的臺灣特產雙寶：蔗糖、鹿皮。(米也開始外銷)");
+
+            addQ("28. 據報導:被魯凱族部落大頭目世家視為傳家寶的青陶瓷,是17世紀初荷蘭人用它裝棕櫚油,運到臺灣後與魯凱族部落「以物易物」,再運銷到日本。荷蘭人是以棕櫚油交換臺灣魯凱族的哪種物品?", 
+                ["硫磺", "蔗糖", "鹿皮", "稻米"], 
+                2, 
+                ["(A) 錯誤。硫磺主要在北部(西班牙勢力或後來清朝開採)。", 
+                 "(B) 錯誤。蔗糖是漢人農耕產物。", 
+                 "(C) 正確。17世紀臺灣平原與淺山丘陵野鹿成群，原住民擅長狩獵。荷蘭人以物易物向原住民大量收購「鹿皮」，並將其高價轉賣到日本(製作武士陣羽織等)，獲取暴利。", 
+                 "(D) 錯誤。稻米為漢人農耕產物。"], 
+                "荷治時期原住民能提供給歐洲人的最大宗貿易商品就是「鹿皮」。");
+
+            addQ("29. 李旦(?~1625年),又稱為李習,綽號為「Captain China」,明末福建省泉州府人,17世紀活躍於中國沿海及日本一帶,並且擁有武裝船隻進行海上貿易。在荷蘭與明朝官府於某地發生衝突時,李旦居中協調,最後荷蘭轉往別地發展。李旦的身分最可能是下列何者?", 
+                ["海商", "中國官員", "翻譯", "荷蘭官員"], 
+                0, 
+                ["(A) 正確。明朝實施海禁，民間私人貿易被視為非法。像李旦這樣擁有武裝船隊，活躍於東亞海域進行走私與貿易的集團首領，被稱為「海商」(或海盜)。他曾是鄭芝龍的義父與早期老闆。", 
+                 "(B) 錯誤。官員不會擁有私人武裝商船。", 
+                 "(C) 錯誤。身分地位比翻譯高很多。", 
+                 "(D) 錯誤。他是中國人。"], 
+                "明朝海禁政策下，促成了武裝「海商」集團(如李旦、顏思齊、鄭芝龍)的崛起。");
+
+            addQ("30. 鄭氏時期雖積極推動貿易,但極少出口稻米,主要原因為何?", 
+                ["為生產高價值的經濟作物甘蔗,因而減少水稻的種植", "稻米須先供應軍民的糧食所需", "臺灣氣候多變,不適合水稻生長", "漢人忙著反清復明,影響水稻耕種"], 
+                1, 
+                ["(A) 錯誤。稻米也是主要作物。", 
+                 "(B) 正確。鄭成功帶來了數萬大軍與眷屬，使得臺灣人口暴增。為了穩定軍心與生存，生產出來的「稻米必須先滿足內部軍民的糧食需求」(實施軍屯)，因此極少有餘糧可以用作出口貿易。", 
+                 "(C) 錯誤。臺灣氣候非常適合水稻。", 
+                 "(D) 錯誤。軍隊平時就是務農種稻。"], 
+                "鄭氏治臺面臨的最大危機是「缺糧」，因此米糧管制嚴格，優先自用。");
+
+            addQ("31. 16世紀末,明朝為了防止日本人騷擾東南沿海地區,派兵進駐澎湖,此項政策所造成的影響為何?", 
+                ["導致澎湖的貿易絡繹不絕", "臺灣本島取代澎湖成為海商的活動場所", "日本趁機佔領臺灣本島", "臺灣自此開始有大量漢人移入"], 
+                1, 
+                ["(A) 錯誤。明朝派兵是為了防堵，會打擊走私貿易。", 
+                 "(B) 正確。因為澎湖有了明朝官兵駐守(官方力量介入)，原本在澎湖活動的海商(海盜)與走私客為了躲避查緝，紛紛轉移陣地，退往當時沒有政府管轄的「臺灣本島」(特別是西南部)，使得臺灣開始成為海商的活動基地。", 
+                 "(C) 錯誤。日本當時並未佔領臺灣。", 
+                 "(D) 錯誤。大量漢人移入是在荷治與鄭氏時期。"], 
+                "官方兵力進駐澎湖，反而把走私海商擠到了化外之地的臺灣本島。");
+
+            addQ("32. 高通是福建著名商人,常到某個國家從事貿易。近幾年發現此國家將許多外國商人驅逐出境,只允許高通及其同鄉商人和荷蘭商人進行買賣。高通是到哪一個國家進行貿易?", 
+                ["葡萄牙", "西班牙", "荷蘭", "日本"], 
+                3, 
+                ["(A) 錯誤。葡萄牙無此政策。", 
+                 "(B) 錯誤。西班牙無此政策。", 
+                 "(C) 錯誤。", 
+                 "(D) 正確。17世紀，日本江戶幕府為了防止天主教勢力影響統治，實施「鎖國政策」，驅逐了西班牙與葡萄牙人，僅允許不傳教的「荷蘭人」以及「中國(漢人)商人」在長崎港進行貿易。"], 
+                "日本鎖國時期的兩大VIP客戶：荷蘭人與漢人。");
+
+            addQ("33. 鄭氏政權取得臺灣後,糧食匱乏成為當時亟需解決的問題。當時鄭氏政權主要是如何解決糧食不足的問題?", 
+                ["從菲律賓大量進口稻米", "以軍屯方式讓軍隊自耕自食", "與英國東印度公司簽訂商約", "從中國大陸走私糧食補充"], 
+                1, 
+                ["(A) 錯誤。菲律賓無大量稻米出口給鄭氏。", 
+                 "(B) 正確。為了解決數萬軍隊的糧荒，鄭氏實施「軍屯政策」(寓兵於農)，規定軍隊在駐紮地必須自行開墾荒地種植糧食，做到自給自足，不向百姓收糧。", 
+                 "(C) 錯誤。與英國商約主要是買武器布料。", 
+                 "(D) 錯誤。清朝海禁嚴格，走私大量米糧困難。"], 
+                "鄭氏的「軍屯」：阿兵哥平常拿鋤頭種田，打仗時拿刀槍上陣。這也奠定了漢人開發臺灣的基礎。");
+
+            addQ("34. 在澎湖馬公天后宮現存一石碑,碑文為「 諭退紅毛番韋麻郎等」。關於此碑文的敘述,以下哪些正確?(甲)指的是鄭成功、(乙)紅毛番是指荷蘭人、(丙)諭退紅毛番一事發生在明朝、(丁)當時的政府為了阻止紅毛番的入侵實行海禁政策", 
+                ["甲乙", "乙丙", "甲丁", "丙丁"], 
+                1, 
+                ["(A) 錯誤。甲錯誤。", 
+                 "(B) 正確。碑文完整為「沈有容諭退紅毛番韋麻郎等」。(乙)當時明朝人稱「荷蘭人」為紅毛番；(丙)此事發生在1604年，正是「明朝」萬曆年間。明朝將領沈有容成功勸退佔領澎湖的荷蘭將領韋麻郎。", 
+                 "(C) 錯誤。甲錯誤。", 
+                 "(D) 錯誤。丁錯誤，海禁政策是為了防倭寇與走私，不是專門針對紅毛番設立的。"], 
+                "臺灣第一碑：「沈有容諭退紅毛番韋麻郎等」石碑，見證了明朝將領逼退荷蘭人的歷史。");
+
+            addQ("35. 16世紀的葡萄牙人航海日誌顯示,當時他們所走的「澳門———日本航線」是進入臺灣海峽後,越過澎湖往東北,沿淡水、雞籠,經琉球到日本。葡萄牙人行走這條航路的資訊最可能得自下列何者?", 
+                ["荷蘭東印度公司", "漢人海商", "明朝海軍", "西班牙海軍"], 
+                1, 
+                ["(A) 錯誤。荷蘭人比葡萄牙人晚來亞洲。", 
+                 "(B) 正確。在歐洲人抵達東亞之前，中國東南沿海的「漢人海商(走私集團)」早就已經熟知並航行於中國、臺灣、日本之間的航線了。初來乍到的葡萄牙人勢必是從這些熟悉海況的漢人海商口中獲得航路資訊。", 
+                 "(C) 錯誤。明朝實施海禁，海軍不進行遠洋航行。", 
+                 "(D) 錯誤。西班牙與葡萄牙是競爭者。"], 
+                "在歐洲大航海時代到來前，東亞海域真正的主人是熟悉季風與洋流的漢人海商。");
+
+            addQ("36. 小琪參加旅遊活動,來到雲林北港,除了品嘗當地美食之外,導遊也介紹某歷史人物的「開臺紀念碑」,他曾經招募漢人渡臺開墾今雲林、嘉義一帶。上述人物應為下列何者?", 
+                ["沈有容", "鄭成功", "顏思齊", "施琅"], 
+                2, 
+                ["(A) 錯誤。沈有容是明朝將領。", 
+                 "(B) 錯誤。鄭成功登陸在臺南鹿耳門。", 
+                 "(C) 正確。明朝末年，海商首領「顏思齊」率眾在笨港(今雲林北港、嘉義新港一帶)登陸，建立營寨並招募漢人開墾，被後人尊稱為「開臺先鋒」。", 
+                 "(D) 錯誤。施琅是清朝將軍。"], 
+                "顏思齊 = 笨港(雲林/嘉義) = 開臺先鋒。");
+
+            addQ("37. 2022年基隆市舉辦城市博覽會,其中一個展場在正濱漁港旁邊,為一處17世紀教堂遺址,在這裡基隆市府邀請民眾戴上VR眼鏡一起體驗17世紀時諸聖教堂的風情,並展示考古挖掘到的錢幣、十字架等物品。從上述教堂的位置和地點可以推斷,興建這座教堂的人應來自何處?", 
+                ["葡萄牙", "荷蘭", "日本", "西班牙"], 
+                3, 
+                ["(A) 錯誤。葡萄牙未佔領臺灣。", 
+                 "(B) 錯誤。荷蘭主要在南部(臺南)。", 
+                 "(C) 錯誤。日本當時無建教堂。", 
+                 "(D) 正確。題幹提到地點在「基隆市(17世紀稱雞籠)」，且建有「教堂、十字架(天主教)」。這完全符合17世紀佔領北臺灣並積極傳播天主教的「西班牙人」的歷史特徵。"], 
+                "基隆(和平島)與淡水(紅毛城原址)的早期歐洲建築，最初都是由西班牙人建造的。");
+
+            addQ("38. 小豪在歷史博物館裡看到一份古老文件,寫著:「我會想要攻克臺灣,是想以此作為根據地,儲備勢力對抗清人………………」。這份文件最有可能為下列何人所寫?", 
+                ["施琅", "鄭芝龍", "陳永華", "鄭成功"], 
+                3, 
+                ["(A) 錯誤。施琅是清朝人，目的是消滅明鄭。", 
+                 "(B) 錯誤。鄭芝龍降清了。", 
+                 "(C) 錯誤。陳永華是鄭經的文臣。", 
+                 "(D) 正確。「攻克臺灣」且目的是「作為根據地對抗清人(反清復明)」，這是「鄭成功」東征臺灣最核心的戰略考量。"], 
+                "鄭成功趕走荷蘭人，不是為了開疆拓土，而是因為在大陸打輸了，需要一個安全的基地反攻大陸。");
+
+            addQ("39. 17世紀初期,臺灣西南部地區出現了一個日本聚落,這個聚落出現的原因最可能為何?", 
+                ["日本人口過剩,必須移民臺灣", "日本缺乏蔗糖,來臺種植甘蔗", "與荷蘭貿易合作,共同開發臺灣", "日本倭寇以臺灣為據點,進行走私貿易"], 
+                3, 
+                ["(A) 錯誤。當時日本無此移民政策。", 
+                 "(B) 錯誤。日本人來主要不是為了務農。", 
+                 "(C) 錯誤。初期荷蘭人還沒來。", 
+                 "(D) 正確。16、17世紀，明朝實施海禁，使得許多中日走私客與「日本倭寇」轉移到沒有政府管轄的臺灣(特別是西南部)作為休息、補給與走私貨物交換的隱蔽據點。"], 
+                "在荷蘭人到來前，臺灣西南部是漢人海盜與日本倭寇走私的法外之地。");
+
+            addQ("<img src='Exam-History-2/p40.jpg' alt='第40題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>40. 臺灣位於西太平洋南來北往的重要交通樞紐,自古以來國際貿易發達,由附圖中的路線與商品,可推測這應為臺灣在哪一個時期的對外貿易網絡?(圖示：臺灣輸出蔗糖/鹿皮至日本，進口軍用物資；輸出蔗糖/鹿皮至英國商人，進口軍用物資/布料；且標註清朝為「走私貿易」)", 
+                ["荷治時期", "鄭氏時期", "清帝國時期", "史前時代"], 
+                1, 
+                ["(A) 錯誤。荷治時期沒有特別強調進口大量「軍用物資」，且與清朝的關係不是走私為主。", 
+                 "(B) 正確。圖中顯示臺灣向日本與英國進口大量「軍用物資」，並且與清朝的貿易被標註為「走私貿易」。這完美反映了「鄭氏時期」因為遭清朝海禁封鎖，必須積極向外購買武器以準備反清復明的歷史背景。", 
+                 "(C) 錯誤。清帝國統治時無須向日本買軍用物資對抗清朝。", 
+                 "(D) 錯誤。史前無此國際貿易網。"], 
+                "進口「軍用物資/武器」+ 對中國「走私貿易」 = 鄭氏時期的貿易特徵。");
+
+            addQ("41. 揆一先生是荷蘭的臺灣長官,他回到巴達維亞後受審,被控告未盡忠職守,致使公司重要財產落入敵人之手。他回國後,出版《被遺誤的臺灣》,反指責荷蘭東印度公司本身高層失職,他因孤立無援才失職。揆一的對手是誰?", 
+                ["鄭芝龍", "日本倭寇", "鄭成功", "施琅"], 
+                2, 
+                ["(A) 錯誤。鄭芝龍並未攻打荷蘭統治的臺灣。", 
+                 "(B) 錯誤。倭寇未佔領熱蘭遮城。", 
+                 "(C) 正確。1662年，率領大軍包圍熱蘭遮城，迫使荷蘭末代駐臺長官「揆一」開城投降的對手，正是「鄭成功」。", 
+                 "(D) 錯誤。施琅是打敗鄭克塽。"], 
+                "揆一(荷蘭末代長官)的剋星就是國姓爺鄭成功。");
+
+            addQ("42. 來自歐、亞的海上集團,於17世紀在臺灣進行跨國性的商業競爭,不同的是,其中有些商團得到其王室或政府的認可與支持,但下列哪一組國家的商團卻在17世紀中晚期,背離當朝政權之政策,以走私的方式進行?", 
+                ["荷蘭、西班牙", "葡萄牙、西班牙", "英國、荷蘭", "中國、日本"], 
+                3, 
+                ["(A) 錯誤。皆有王室/國家力量支持(東印度公司)。", 
+                 "(B) 錯誤。皆有國家力量支持。", 
+                 "(C) 錯誤。皆有國家力量支持。", 
+                 "(D) 正確。17世紀，中國明朝實施「海禁」，清初亦有嚴格海禁；而日本江戶幕府則實施「鎖國政策」。因此，活躍於海上的中國(漢人)與日本海商，其行為都是違背本國政府政策的「走私」活動。"], 
+                 "歐洲國家是「官商合一」來亞洲發大財；中日海商則是「違法走私」在夾縫中求生。");
+
+            addQ("43. 澳門自古為中國的領土之一,然在西方勢力來到中國後,曾有一段時間將澳門租借給外國,澳門雖然於1999年12月歸還中國,成為中國的特別行政區,但今天澳門仍保留了許多濃濃的外國風。澳門曾經是哪一個國家的貿易據點?", 
+                ["葡萄牙", "西班牙", "英國", "荷蘭"], 
+                0, 
+                ["(A) 正確。16世紀中葉，大航海時代的先驅「葡萄牙人」取得明朝的同意，在「澳門」建立貿易與居住據點，直到1999年才交還政權。", 
+                 "(B) 錯誤。西班牙據點在菲律賓馬尼拉。", 
+                 "(C) 錯誤。英國據點在香港(19世紀)。", 
+                 "(D) 錯誤。荷蘭據點在印尼巴達維亞。"], 
+                "歷史記憶對應：澳門 = 葡萄牙；香港 = 英國。");
+
+            addQ("44. 根據以下二則資料,判斷其是描述哪一外來勢力與原住民的關係?<br>資料一：1636年,在新港舉行,折草宣示相互和平,由長官授與禮袍、權杖、親王旗。<br>資料二：1641年,在新港舉行,告知前任長官殉職,確認服從新任長官。立約和平相處,爭執由長官仲裁。贈送禮袍、飾有白銀的權杖。", 
+                ["鄭氏政權", "西班牙人", "荷蘭東印度公司", "日本倭寇"], 
+                2, 
+                ["(A) 錯誤。鄭氏政權年代較晚，且作法不同。", 
+                 "(B) 錯誤。西班牙人在北臺灣，新港在南臺灣。", 
+                 "(C) 正確。文獻描述的是定期召開的「地方會議」。這是「荷蘭聯合東印度公司」為了控制廣大原住民部落所採取的統治手段，透過授予長老「權杖」與禮袍來確認其統治權威，並定期集會聽取宣導。", 
+                 "(D) 錯誤。倭寇無此統治組織。"], 
+                "荷蘭人管理原住民的法寶：「地方會議」與賜予「權杖」。");
+
+            addQ("45. 附表是臺灣歷史上某個時期對外貿易的情形,由內容判斷,當時統治者治臺的主要目的為何?<br>英國：輸入軍火/布料，輸出蔗糖/鹿皮<br>日本：輸入軍用物資，輸出蔗糖/鹿皮", 
+                ["厚植實力等待反攻中國的時機", "防止漢人反清復明的勢力復甦", "設官治理以防範倭寇武力入侵", "加強防務以保障大清東南沿海"], 
+                0, 
+                ["(A) 正確。大量輸出農獵特產(蔗糖、鹿皮)換取「軍火、軍用物資」，這是「明鄭時期」的典型貿易模式。鄭氏政權來臺的終極目標就是維持軍隊戰力，以「厚植實力等待反攻中國(反清復明)的時機」。", 
+                 "(B) 錯誤。這是清朝治臺初期的心態。", 
+                 "(C) 錯誤。此時期倭寇威脅已大幅降低。", 
+                 "(D) 錯誤。鄭氏就是清朝東南沿海最大的威脅，而非保障。"], 
+                "看到瘋狂買「軍火」的臺灣統治者，必定是一心想著反攻大陸的鄭氏政權。");
+
+            addQ("<img src='Exam-History-2/p46.jpg' alt='第46題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>46. 附圖是臺灣某時期敵對陣營間往返的書信,根據圖中內容判斷,這二個陣營最可能是下列何者?<br>左信：致雞籠島要塞長官...攻取聖薩爾瓦多城...<br>右信：致大員長官...遵守向國王承諾的誓約,不能交出城堡...", 
+                ["清廷與鄭氏政權", "日本與臺灣民主國", "荷蘭聯合東印度公司與西班牙", "鄭氏政權與荷蘭聯合東印度公司"], 
+                2, 
+                ["(A) 錯誤。無關。", 
+                 "(B) 錯誤。無關。", 
+                 "(C) 正確。左信寄給「雞籠島(基隆)長官」，要攻取「聖薩爾瓦多城」，這是西班牙在臺北部的據點。右信回覆給「大員(臺南)長官」，大員是荷蘭的大本營。因此這是「荷蘭人(大員)」北上勸降「西班牙人(雞籠)」的歷史信件。", 
+                 "(D) 錯誤。鄭氏攻打的是大員的熱蘭遮城，而非雞籠。"], 
+                "雞籠/聖薩爾瓦多城 = 西班牙；大員 = 荷蘭。兩者通信即為「荷西衝突」(1642年)。");
+
+            addQ("47. 清帝國末年因為拒絕與英國平等通商而引發戰爭,但臺灣早在鄭氏治臺時期,即與英國簽訂通商條約並獲得極大的利益。請問:當時鄭氏與英國簽約通商的背景為何?", 
+                ["明鄭為突破清廷經濟封鎖,開闢海外市場", "臺灣與英國聯盟,意圖壟斷南洋貿易市場", "英國挾船堅炮利之勢,脅迫臺灣開港通商", "西方傳教士為傳播基督教信仰,積極促成"], 
+                0, 
+                ["(A) 正確。清朝為了困死臺灣的明鄭政權，實施嚴厲的「海禁政策」(片板不許下海)。鄭氏為了獲取反清物資與經濟來源，必須主動出擊，主動與英國東印度公司等外國勢力簽約，以「突破清廷經濟封鎖，開闢海外市場」。", 
+                 "(B) 錯誤。並未達成壟斷。", 
+                 "(C) 錯誤。英國當時是來和平做生意的，沒有脅迫。", 
+                 "(D) 錯誤。鄭氏時期幾乎沒有傳播基督教。"], 
+                "清朝實施海禁封鎖，逼得明鄭政權必須全面走向國際化貿易。");
+
+            addQ("48. 附表是某一組織的重要事件整理,根據內容判斷,下列何者最適合放入表中的「?」處?<br>重要事件<br>★成立於十七世紀初<br>★ ?<br>★曾在臺灣、南非好望角等地建立殖民地<br>★在日本鎖國時期,獲准與日本貿易", 
+                ["從印度輸出大量瓷器販賣至中國", "以白銀吸引中國商人至馬尼拉交易", "以澳門為據點,推動亞洲傳教事業", "設亞洲總部於巴達維亞,統籌經營"], 
+                3, 
+                ["(A) 錯誤。瓷器是中國輸出。", 
+                 "(B) 錯誤。這是西班牙在馬尼拉的做法。", 
+                 "(C) 錯誤。這是葡萄牙在澳門的做法。", 
+                 "(D) 正確。表格描述的組織是「荷蘭聯合東印度公司(VOC)」，它統治過臺灣，也是日本鎖國時唯一獲准貿易的歐洲國家。VOC在亞洲的核心策略就是「將亞洲總部設立於印尼的巴達維亞(今雅加達)」以統籌運作。"], 
+                 "荷蘭東印度公司(VOC)的亞洲心臟：印尼巴達維亞。");
+
+            addQ("49. 十七世紀時,有封信函中提到:「今年有兩艘船前往我們統治的雞籠,除了補給外,也負責購買中國商品運回我國的根據地馬尼拉,但船隻卻遲遲未回;且原先每年從中國與澳門前來馬尼拉貿易的船隻也還沒進港。我擔心若進口貨物不足,我們會蒙受許多的損失。」根據上文判斷,此封信函最可能是下列何者之間的通信?", 
+                ["葡萄牙使節給明朝皇帝", "鄭經給英國東印度公司", "臺灣長官給巴達維亞總督", "菲律賓總督給西班牙國王"], 
+                3, 
+                ["(A) 錯誤。葡萄牙未統治雞籠。", 
+                 "(B) 錯誤。鄭氏根據地不在馬尼拉。", 
+                 "(C) 錯誤。巴達維亞是荷蘭，荷蘭未將馬尼拉作為根據地。", 
+                 "(D) 正確。信中提到「我們統治的雞籠」與「我國的根據地馬尼拉」。17世紀統治北臺灣雞籠(基隆)，且亞洲大本營在菲律賓馬尼拉的國家，正是「西班牙」。因此這是菲律賓總督與西班牙國王間的通信。"], 
+                 "馬尼拉 + 雞籠 = 100% 西班牙人的地盤。");
+
+            addQ("50. 某人曾寫了一首詩,用以表達自己的心境與面臨的情勢,其大意是說:雖然王室政權在中原氣數已盡,然而文化傳承仍保留在此海外之地;我的雄心未曾稍減,日夜整軍備戰以謀恢復故土。由詩的內容判斷,此人應是下列何者?", 
+                ["鄭經", "郭懷一", "沈有容", "鄭芝龍"], 
+                0, 
+                ["(A) 正確。(註：原題庫給A鄭經。鄭成功與鄭經父子皆抱持反清復明、保留漢族文化於海外(臺灣)的職志。鄭經在位期間，致力於將臺灣漢化、建設文教制度，延續明朝文化香火，並參與三藩之亂謀圖恢復故土。詩境符合明鄭統治者的心聲。)", 
+                 "(B) 錯誤。郭懷一是反荷蘭的漢人領袖。", 
+                 "(C) 錯誤。沈有容是明朝將領。", 
+                 "(D) 錯誤。鄭芝龍降清了。"], 
+                "「恢復故土」、「王室氣數已盡(明亡)」指的就是明鄭時期(鄭成功/鄭經)堅持反清復明的核心思想。");
+
+            addQ("<img src='Exam-History-2/p51.jpg' alt='第51題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>51. 附圖是《歐洲每日大事記》內〈快報〉的部分內容,參考圖中資料,有助於我們了解下列哪一主題?<br>標題:XXXX年X月X日(巴達維亞方面得知臺灣遇襲),駐守福爾摩沙的荷蘭員工遭受漢人入侵的情況...他要求城主揆一開城投降...若拒絕投降,他誓言...毀滅任何有生命的東西。", 
+                ["郭懷一抗荷事件", "鄭氏政權的建立過程", "沈有容諭退荷蘭人的過程", "荷蘭聯合東印度公司的成立背景"], 
+                1, 
+                ["(A) 錯誤。郭懷一事件並未包圍熱蘭遮城要求揆一投降。", 
+                 "(B) 正確。報紙提到「漢人入侵福爾摩沙」、「要求城主揆一開城投降」。在臺灣歷史上，率領大軍攻打荷蘭人，逼迫最後一任長官揆一投降的漢人領袖就是鄭成功。這場戰役正是「鄭氏政權建立」的開端。", 
+                 "(C) 錯誤。沈有容是在澎湖。", 
+                 "(D) 錯誤。這已經是東印度公司要被趕走的時候了。"], 
+                "逼迫荷蘭長官「揆一」投降的漢人，就是開啟明鄭時代的鄭成功。");
+
+            addQ("52. 西元1597年,有一封呈報給國王的信中寫到:「我們希望佔領福爾摩沙的這個港口,最迫切的理由是為了確保菲律賓的安全。因為………………日本企圖奪取這個港口以進佔馬尼拉,我們要確保菲律賓的安全就必須擁有這個港口。」由上述背景判斷,這封書信最可能是呈報給哪一國國王?", 
+                ["荷蘭", "英國", "菲律賓", "西班牙"], 
+                3, 
+                ["(A) 錯誤。荷蘭的根據地在印尼。", 
+                 "(B) 錯誤。英國在東南亞勢力當時未深耕菲律賓。", 
+                 "(C) 錯誤。菲律賓當時是殖民地。", 
+                 "(D) 正確。信中強調佔領臺灣是為了「確保菲律賓/馬尼拉的安全」免受日本威脅。當時佔領並統治菲律賓馬尼拉的歐洲國家就是「西班牙」。西班牙後來也真的因此出兵佔領了北臺灣。"], 
+                 "保護菲律賓馬尼拉，是西班牙人決定佔領北臺灣的首要防禦戰略。");
+
+            addQ("<img src='Exam-History-2/p53.jpg' alt='第53題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>53. 以下是關於十七世紀臺灣地震的紀錄:「這年二月十五日發生強烈地震,這是我們入臺統治以來最大的地震,漢人店鋪倒塌二十多間,還有婦人及小孩被壓死,熱蘭遮城也多處龜裂。長官立刻向總部呈報,要求儘快從暹羅(今泰國)運木材來進行修復工作。」文中的「總部」,最可能位於附圖中甲、乙、丙、丁何處?", 
+                ["甲(臺灣)", "乙(菲律賓)", "丙(印尼)", "丁(越南)"], 
+                2, 
+                ["(A) 錯誤。甲是臺灣，不是總部。", 
+                 "(B) 錯誤。乙是菲律賓馬尼拉(西班牙總部)。", 
+                 "(C) 正確。文中提到「熱蘭遮城龜裂」，可知這是荷蘭人統治臺灣時期的紀錄。荷蘭聯合東印度公司(VOC)在亞洲的「總部」設立於印尼的「巴達維亞(今雅加達)」，對應地圖中的「丙」處。", 
+                 "(D) 錯誤。丁是越南。"], 
+                "荷蘭人駐臺長官的頂頭上司，就坐在印尼巴達維亞的亞洲總部裡。");
+
+            addQ("54. 鄭氏家族與臺灣的歷史緊密相連,下列有關鄭氏家族的敘述,何者正確?", 
+                ["鄭成功驅逐佔據基隆、淡水一帶的西班牙人,經營臺灣", "鄭經早年曾在臺南開墾,建立安平古堡", "鄭成功在今臺南市興建孔廟,推行文教", "鄭克塽在位時,清廷派施琅攻臺,鄭軍戰敗投降"], 
+                3, 
+                ["(A) 錯誤。鄭成功驅逐的是南部的荷蘭人。驅逐西班牙人的是荷蘭人。", 
+                 "(B) 錯誤。安平古堡(熱蘭遮城)是荷蘭人建的。", 
+                 "(C) 錯誤。興建全臺首學孔廟的是鄭經時期的諮議參軍陳永華。", 
+                 "(D) 正確。明鄭的第三代統治者鄭克塽在位時，清朝將領施琅於澎湖海戰擊敗鄭軍，鄭克塽隨後開城投降，結束了明鄭時期。"], 
+                 "鄭家三代的句號：鄭克塽投降清朝將領施琅。");
+
+            addQ("55. 1608年荷蘭東印度公司董事會發出指示說:「………………我們必須用一切可能來增進對華(中國)貿易,首要目的是取得生絲,因為生絲利潤優厚,大宗販運能夠為我們帶來更多的收入和繁榮。」由此可知荷蘭人佔據澎湖、臺灣最主要的目標為何?", 
+                ["防備西班牙入侵臺灣", "宣揚基督教", "與中國貿易、通商", "防止日本人侵佔臺灣"], 
+                2, 
+                ["(A) 錯誤。這不是荷蘭人最原始的首要目的。", 
+                 "(B) 錯誤。傳教是附帶的，賺錢才是王道。", 
+                 "(C) 正確。從引文中「增進對華貿易、取得生絲利潤優厚」可以非常明確得知，荷蘭人東來並佔領澎湖、臺灣，最核心的驅動力就是為了「與中國通商貿易」，獲取龐大的經濟利益。", 
+                 "(D) 錯誤。防日本不是主要目的。"], 
+                "東印度公司的本質是一間「營利企業」，他們所做的一切軍事佔領，最終目的都是為了「賺錢(貿易)」。");
+
+            addQ("<img src='Exam-History-2/p56.jpg' alt='第56題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>56. 畢道文的家鄉自十七世紀以來長期受荷蘭殖民,從醫科學校畢業後,他即前往荷蘭深造,並積極參與反荷統治、支持家鄉獨立的政治運動。畢道文的家鄉最可能位於附圖中甲、乙、丙、丁何處?", 
+                ["甲", "乙", "丙", "丁"], 
+                2, 
+                ["(A) 錯誤。甲是臺灣，荷蘭統治僅38年，非長期至近現代。", 
+                 "(B) 錯誤。乙是菲律賓，受西班牙與美國殖民。", 
+                 "(C) 正確。文中提到「長期受荷蘭殖民，有反荷獨立運動」。在大航海時代後，印尼成為荷蘭長期的殖民地(荷屬東印度)，直到二戰後才獨立。地圖中的「丙」正是印尼群島。", 
+                 "(D) 錯誤。丁是中南半島(越南等)，受法國殖民。"], 
+                "荷蘭人在亞洲最大的也是統治最久的殖民地就是「印尼」。");
+
+            addQ("57. 附表是小美的歷史報告,由內容判斷,她的報告主題應為何?<br>文教：拼寫新港文,設立學校,教授基督教教義<br>經濟：收取高額稅金、發展轉口貿易、招募漢人開墾<br>政治：透過部落長老維持秩序", 
+                ["漢人在臺灣、澎湖的活動", "日人在臺灣、澎湖的活動", "荷蘭人統治臺灣時的概況", "西班牙人在北臺灣的治理"], 
+                2, 
+                ["(A) 錯誤。漢人無新港文與基督教政策。", 
+                 "(B) 錯誤。日人統治手段與此不同。", 
+                 "(C) 正確。創造「新港文」拼寫原住民語、教授「基督教」、發展轉口貿易、以及透過地方會議任命「長老」維持秩序，這些全都是「荷蘭人」統治臺灣時期的經典施政特色。", 
+                 "(D) 錯誤。西班牙人信仰天主教，且未廣泛推行新港文。"], 
+                "荷蘭治臺政策大禮包：新港文、基督教、轉口貿易、長老權杖。");
+
+            addQ("58. 17世紀某一事件記錄如下,根據內容判斷,「乙社」最可能是下列何者?<br>1635年11月23日,5百名荷蘭士兵與「甲社」盟友在幾乎沒有抵抗的情形下長驅直入,整個「乙社」部落被一把火燒成灰燼。11月28日,「乙社」兩名長老前來向荷蘭求和,並帶回了荷蘭人開出的條件。荷蘭此次的軍事行動,可說是奠定了在南臺灣統治權的關鍵戰役。", 
+                ["大肚社", "大員社", "新港社", "麻豆社"], 
+                3, 
+                ["(A) 錯誤。大肚社在中部，且未被荷蘭人完全焚毀屈服。", 
+                 "(B) 錯誤。大員是地名(荷蘭據點)。", 
+                 "(C) 錯誤。新港社通常是親荷蘭的盟友(甲社)。", 
+                 "(D) 正確。在荷治初期，勢力強大的「麻豆社」曾殺害多名荷蘭士兵。1635年，荷蘭人聯合親荷的新港社，發兵血洗並焚毀了麻豆社，迫使原住民屈服，這場「麻豆社之役」是荷蘭確立南部統治權的關鍵威立戰。"], 
+                "荷蘭人對原住民的殺雞儆猴之戰：焚毀麻豆社。");
+
+            addQ("59. 小樂翻閱書籍,發現臺灣在荷蘭人統治下,原住民村落中開始興建教堂,族人被強迫每星期日上教堂、做禮拜。同時,在新港(今臺南市新市區)、麻豆(今臺南市麻豆區)等地建立學校,以稻穀、布匹等物獎勵村民入學。不僅兒童要上學,成年男女也要利用黎明或傍晚上課;不願意的人,會被施以罰款,甚至被逮捕。荷蘭人施行這些措施的目的為何?", 
+                ["讓原住民信仰基督教", "加強原住民的農耕技術", "為使原住民信仰天主教", "拉攏原住民以對抗漢人"], 
+                0, 
+                ["(A) 正確。荷蘭人興建教堂、強迫做禮拜、建立學校教讀聖經，這一切強制與獎勵並行的文教措施，最核心的目的就是為了改變原住民的傳統信仰，「讓他們改信基督教(新教)」，以利同化與統治。", 
+                 "(B) 錯誤。學校不教農耕。", 
+                 "(C) 錯誤。荷蘭人信奉的是「基督教(新教)」，西班牙人才是天主教。", 
+                 "(D) 錯誤。初期主要是為了宗教同化，而非針對漢人。"], 
+                "荷蘭人在原住民部落設學校，課本不是國語數學，而是《聖經》。");
+
+            addQ("60. 小薇的歷史報告內容如下,她報告主題應為下列何者?<br>1670年,大肚王率領大肚社、沙轆社與鬥尾龍岸社等部落勇士,對抗異族政權的入侵行動,其中以沙轆社抗爭最為激烈,被屠殺了數百名,整個沙轆社僅存6人倖免。", 
+                ["海商與原住民的對立情形", "荷蘭對南部原住民的統治", "鄭氏時期與原住民的衝突", "西班牙與北部原住民的衝突"], 
+                2, 
+                ["(A) 錯誤。這不是單純海商。", 
+                 "(B) 錯誤。年代(1670)已非荷治時期(1662結束)。", 
+                 "(C) 正確。1670年處於「明鄭時期」。鄭氏政權為了擴張軍屯土地，軍隊向中、南部侵墾，引發原住民強烈抵抗。中部跨部落聯盟「大肚王」的反抗遭到鄭氏軍隊血腥鎮壓(如沙轆社幾乎滅村)，這是鄭氏與原住民嚴重衝突的代表事件。", 
+                 "(D) 錯誤。地理位置(中部)與年代不符。"], 
+                "鄭氏軍隊為了「搶地種田(軍屯)」，與中部大肚王爆發了慘烈的原漢衝突。");
+
+            addQ("61. 恩平在書上看到一段描述某一時期臺灣統治當局治理原住民的情形如下,文中的「長官」最可能是由何者派任?<br>地方會議在赤崁舉辦,………………長官開始對大會致詞,翻譯人員將長官的話口譯成新港社的原住民語…………………。長官任命各社長老、授予權杖,並且關切官方修建的教堂和學校的事務等。", 
+                ["鄭氏政權", "海商首領", "西班牙國王", "荷蘭聯合東印度公司"], 
+                3, 
+                ["(A) 錯誤。鄭氏無此制度。", 
+                 "(B) 錯誤。海商無統治機構。", 
+                 "(C) 錯誤。西班牙人在北部。", 
+                 "(D) 正確。這段引文描述了經典的「地方會議」場景：在赤崁(臺南)舉辦、新港社語翻譯、任命長老授權杖、關切教堂(基督教)學校。實施這套原住民統治制度的官方機構就是「荷蘭聯合東印度公司(VOC)」。"], 
+                "只要在題目裡看到「地方會議」與「授與長老權杖」，答案秒選荷蘭人。");
+
+            addQ("62. 這是荷蘭人佔領臺灣後,在島上的一次大規模軍事行動,藉此餘威,掃蕩南部及周圍各社,令他們帶著檳榔和椰子樹苗前來簽署歸服條約,荷蘭人的勢力範圍因此得以擴展到臺灣南部的大部分地區,這個具有「殺雞儆猴」意味的事件為何?", 
+                ["麻豆社之役", "擊敗鄭成功", "新港社事件", "郭懷一事件"], 
+                0, 
+                ["(A) 正確。荷蘭人出兵摧毀曾殺害荷蘭士兵的「麻豆社」，展現強大武力。周圍原本觀望的原住民部落見狀大為恐懼，紛紛帶著樹苗前來表示歸順。此役達到了完美的「殺雞儆猴」效果，穩固了荷蘭的統治。", 
+                 "(B) 錯誤。荷蘭是被鄭成功擊敗。", 
+                 "(C) 錯誤。新港社多為盟友。", 
+                 "(D) 錯誤。郭懷一事件是漢人反抗事件，而非原住民。"], 
+                "麻豆社之役是荷蘭人在臺灣立威的關鍵，從此原住民部落紛紛懾於武力而歸順。");
+
+            addQ("63. 關於荷蘭與臺灣原住民的關係,下列敘述何者錯誤?", 
+                ["荷蘭人與歸順的社結盟,以加強控制", "傳播天主教的成效良好", "擊敗西拉雅族的麻豆社,奠定在南臺灣的統治地位", "利用原住民的協助,平定郭懷一抗荷事件"], 
+                1, 
+                ["(A) 正確敘述(不選)。荷蘭確實利用結盟來以番制番。", 
+                 "(B) 錯誤敘述(應選)。荷蘭人信奉且傳播的是「基督教(新教)」，而非「天主教」。傳播天主教的是在北部的西班牙人。", 
+                 "(C) 正確敘述(不選)。麻豆社之役確實奠定其威信。", 
+                 "(D) 正確敘述(不選)。荷蘭人利用原漢矛盾，動員原住民鎮壓了漢人的郭懷一事件。"], 
+                "宗教信仰大解碼：荷蘭人＝基督教(新教)；西班牙人＝天主教。一字之差，完全不同。");
+
+            addQ("64. 小天在研究臺灣歷史時,研讀到以下一段文字:「………………各社設立小學,每學30人,於是原住民多習羅馬字,能作書,國人又與原住民婦女結婚,教化之力日進。」從上述內容判斷,這應與下列何國統治有關?", 
+                ["荷蘭", "日本", "西班牙", "葡萄牙"], 
+                0, 
+                ["(A) 正確。在原住民部落設立學校，並教導原住民學習「羅馬字(拼寫成新港文)」來寫字，這是「荷蘭人」治臺時期最具特色的文教政策。", 
+                 "(B) 錯誤。日本人教的是日文(假名/漢字)。", 
+                 "(C) 錯誤。西班牙人並未普遍推廣羅馬字書寫。", 
+                 "(D) 錯誤。葡萄牙未統治臺灣。"], 
+                "看到「原住民學習羅馬字(新港文)」，就是荷蘭時期的文化遺產。");
+
+            addQ("65. 17世紀初,有一群居住在臺灣北部的原住民,他們通曉漢語等外語,會使用貨幣,扮演漢人與其他原住民貨物交易的中間人。在當時有傳教士隨軍隊來臺而進駐北臺灣,他最有可能是哪個國家的人?", 
+                ["西班牙", "葡萄牙", "日本", "荷蘭"], 
+                0, 
+                ["(A) 正確。題目提到傳教士進駐「北臺灣」。在17世紀大航海時代，派兵佔領北臺灣(基隆、淡水)並帶來傳教士(天主教)的國家就是「西班牙」。", 
+                 "(B) 錯誤。葡萄牙未駐軍臺灣。", 
+                 "(C) 錯誤。日本無傳教士隨軍。", 
+                 "(D) 錯誤。荷蘭進駐在南臺灣。"], 
+                "地理位置決勝負：北臺灣 = 西班牙人。");
+
+            addQ("66. 《艾爾摩莎的瑪利亞》講述19歲的西班牙青年若望,遇到雞籠馬賽小女孩雨蘭,在距離西班牙很遠的和平島,他們倆人互相學習彼此文化,逐漸認識了解、相知相惜,故事尾聲兩人因為戰爭天人永隔,傷心的若望最後選擇將身心奉獻給宗教,遠赴異國傳教。上述若望所信仰的宗教為何?", 
+                ["天主教", "基督教", "道教", "佛教"], 
+                0, 
+                ["(A) 正確。若望是「西班牙」人，當時的西班牙帝國是非常虔誠且強大的「天主教」國家，他們在世界各地的殖民擴張都伴隨著熱烈的天主教傳教活動。", 
+                 "(B) 錯誤。荷蘭人才是信仰基督教(新教)。", 
+                 "(C) 錯誤。漢人信仰。", 
+                 "(D) 錯誤。漢人/日本信仰。"], 
+                "西班牙人是當時全歐洲最狂熱的「天主教」捍衛者。");
+
+            addQ("67. 臺灣在17世紀時有一個原住民部落聯盟,其勢力範圍主要在今日的臺中市、彰化縣和南投縣的一部分。該聯盟曾和荷蘭人抗爭,之後到了鄭氏時期,遭到強力軍事鎮壓而逐漸式微,至18世紀已消失瓦解。上文中提到的聯盟,其共主應該是下列何者?", 
+                ["大肚王", "大甲王", "大里王", "大溪王"], 
+                0, 
+                ["(A) 正確。在17世紀的臺灣中部(中彰投地區)，存在著一個由跨部落原住民所組成的鬆散聯盟，其領袖被稱為「大肚王」(或白晝之王)。他們曾與荷蘭人周旋，最後在明鄭軍隊的殘酷鎮壓下式微。", 
+                 "(B) 錯誤。無此歷史名詞。", 
+                 "(C) 錯誤。無此歷史名詞。", 
+                 "(D) 錯誤。無此歷史名詞。"], 
+                "臺灣中部的原住民霸主：大肚王國。");
+
+            addQ("68. 下列是臺灣某一時期官方所設學校的教學情形:<br>…………………就學兒童的年齡從十歲到十三、四歲,學校教授他們羅馬字的讀法及寫法,讓他們用羅馬字拼寫自己的語言(新港語等);並主要傳授學生祈禱文、基督教教義以及教唱聖歌。在當時統轄下的新港社、麻豆社、蕭壠社等地都能看到這樣的學校。<br>這段話最有助於我們用來說明下列何者?", 
+                ["荷蘭聯合東印度公司如何教導臺灣原住民", "明鄭時期儒學教育在臺灣創建的原因始末", "西班牙統治者在北臺灣宣教的內容與方式", "清末臺灣的西學堂如何培養新式人才"], 
+                0, 
+                ["(A) 正確。引文包含了「羅馬字拼寫新港語」、「傳授基督教教義」、「新港/麻豆等南部社群」三個關鍵線索，這完美描繪了「荷蘭聯合東印度公司」在南臺灣對原住民實施宗教與語文同化的教育政策。", 
+                 "(B) 錯誤。明鄭教的是儒家四書五經。", 
+                 "(C) 錯誤。西班牙在北臺灣，且教天主教。", 
+                 "(D) 錯誤。清末西學堂教的是外語與科學。"], 
+                "看見「新港語/羅馬字」與「基督教」，就能確定是荷蘭人的原住民教育。");
+
+            addQ("69. 中古歐洲,基督教傳教士用拉丁文(羅馬字)拼注異教徒的語言成文字,以教導異教徒閱讀《聖經》。在臺灣史上,曾有哪一國的基督教傳教士為方便向原住民傳教,也有類似的作法?", 
+                ["荷蘭", "法國", "西班牙", "葡萄牙"], 
+                0, 
+                ["(A) 正確。荷蘭的基督教(新教)傳教士來到臺灣後，為了有效傳教，創造了用「羅馬字」拼寫西拉雅族語言的文字，用以翻譯《聖經》，這就是著名的「新港文」。", 
+                 "(B) 錯誤。法國未統治臺灣。", 
+                 "(C) 錯誤。西班牙人傳天主教，未留下此類拼音文字的廣泛紀錄。", 
+                 "(D) 錯誤。葡萄牙未統治臺灣。"], 
+                "傳教士的語言學貢獻：用羅馬字母創造「新港文」。");
+
+            addQ("70. 附表是荷蘭統治臺灣時期,對原住民傳教成果的統計。由表中內容,我們可以讀出下列哪一項訊息?<br>表列：新港社/蕭壠社/目加溜灣社/麻豆社/大目降社，皆有人口數與受洗者人數的紀錄。", 
+                ["新港社原住民的宗教信仰改變最小", "荷蘭人使用武力脅迫人民改變信仰", "各原住民社群皆有人接受新的宗教", "原住民社群受洗者的人數日漸降低"], 
+                2, 
+                ["(A) 錯誤。新港社受洗比例其實很高(1047/1047)。", 
+                 "(B) 錯誤。從表格的純粹數字統計中，無法看出「武力脅迫」這個動作。", 
+                 "(C) 正確。表格列出的五個部落(新港、蕭壠、目加溜灣、麻豆、大目降)，其「受洗者」欄位皆有大於零的數字，客觀證明了「各原住民社群皆有人接受新的宗教(基督教)」。", 
+                 "(D) 錯誤。表中無時間軸，無法看出日漸降低的趨勢。"], 
+                "圖表判讀題：只說表格有顯示的內容，不要自行腦補未呈現的因果關係。");
+
+            addQ("71. 下文描寫某一時期臺灣統治當局治理原住民的情景:「地方會議在赤崁舉辦,………………長官開始對大會致詞,翻譯人員則將長官的話口譯成新港社的原住民語…………………。接著,長官任命各社長老、授予權杖,並關切官方修建的教堂和學校的事務、村落繳付的年貢等。」文中的「長官」最可能是由下列何者所指派?", 
+                ["英國領事館", "西班牙王國", "臺灣省行政長官公署", "荷蘭聯合東印度公司"], 
+                3, 
+                ["(A) 錯誤。英國未曾統治臺灣原住民。", 
+                 "(B) 錯誤。西班牙在北臺灣。", 
+                 "(C) 錯誤。這是二戰後國府初期的機構。", 
+                 "(D) 正確。文中的四大關鍵字：「地方會議」、「赤崁(臺南)」、「新港社語」、「授予權杖」，每一項都是「荷蘭聯合東印度公司」專屬的原住民治理制度。"], 
+                 "荷蘭統治原住民的 SOP：定期開地方會議 + 給長老發權杖。");
+
+            addQ("<img src='Exam-History-2/p72.jpg' alt='第72題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>72. 「十七世紀時,臺灣某地區的許多原住民能夠閱讀西班牙文,而在當時的歷史記載中,荷蘭人在此地區探查金礦時,需要會說西班牙話的人才,並且以銀幣作為餽贈原住民的禮物。」此地區最可能位於附圖中何處?", 
+                ["甲(北部)", "乙(澎湖)", "丙(南部)", "丁(恆春)"], 
+                0, 
+                ["(A) 正確。引文中提到原住民「能閱讀西班牙文」，這意味著該地區曾受到西班牙人的長期統治與文化影響。在臺灣，西班牙人的統治區域位於「北部」的基隆與淡水，即地圖上的甲區。", 
+                 "(B) 錯誤。澎湖無西班牙統治。", 
+                 "(C) 錯誤。南部是荷蘭人地盤。", 
+                 "(D) 錯誤。恆春無西班牙統治。"], 
+                "只要與「西班牙文化/語言」沾上邊的，一定都在臺灣最北部。");
+
+            addQ("73. 「新港文書」是研究臺灣歷史發展的重要文獻,這批文獻的書寫文字曾在今臺南附近流傳一百多年。這種文字的起源為何?", 
+                ["是原住民參酌漢字改編創設而成的文字", "是日人為了教育原住民所簡化使用的文字", "是漢人來臺灣後融合土著方言所形成的文字", "是荷人用羅馬字母拼寫原住民語言而成的文字"], 
+                3, 
+                ["(A) 錯誤。原住民原本無文字。", 
+                 "(B) 錯誤。日人推行的是日語教育。", 
+                 "(C) 錯誤。漢人多使用契約漢字。", 
+                 "(D) 正確。「新港文」是17世紀荷蘭基督教傳教士為了向西拉雅族原住民傳教，利用「羅馬字母」拼寫原住民口語發音所創造出來的文字，後來被廣泛用於土地買賣契約(番仔契)中。"], 
+                 "新港文 = 荷蘭傳教士 + 羅馬字母 + 西拉雅語。");
+
+            addQ("74. 以下哪些是17世紀西班牙人佔領臺灣的目的?(甲)和實施鎖國政策的日本貿易;(乙)以臺灣作為跳板,攻佔中國;(丙)以雞籠和淡水作為對日貿易的中心;(丁)積極傳播天主教", 
+                ["甲乙", "甲丙", "乙丙", "丙丁"], 
+                3, 
+                ["(A) 錯誤。乙錯誤。", 
+                 "(B) 錯誤。甲錯誤(日本鎖國後驅逐了西班牙)。", 
+                 "(C) 錯誤。乙錯誤。", 
+                 "(D) 正確。西班牙佔領北臺灣的兩大目的：(丙)在雞籠與淡水建立基地，作為對抗荷蘭與發展「對日貿易」的跳板；(丁)身為狂熱的天主教國家，積極向原住民與東亞「傳播天主教」。(註：日本後來鎖國，反而把西班牙趕走了，所以甲不精確；乙攻佔中國非其當時能力與目的)。"], 
+                 "西班牙來臺主線任務：防荷蘭、做日本生意、傳天主教。");
+
+            addQ("75. 有關荷蘭統治時期對原住民的傳教活動,下列敘述何者正確?", 
+                ["使其成功與臺南地區的原住民保持友好關係", "傳教活動以北部和東北部成效較顯著", "在統治範圍內,興辦教會與學校", "荷蘭傳教士利用羅馬字母與新港社原住民簽訂土地契約"], 
+                2, 
+                ["(A) 錯誤。荷蘭統治期間常有武力鎮壓，並非完全友好。", 
+                 "(B) 錯誤。北部是西班牙的地盤。", 
+                 "(C) 正確。荷蘭人為了有效傳播基督教並同化原住民，在他們統治的南部村落廣泛「興建教堂與學校」，強迫原住民做禮拜並學習羅馬拼音的新港文。", 
+                 "(D) 錯誤。簽訂土地契約多是後來清朝時「漢人」與原住民的行為，傳教士創造羅馬字是為了傳教，而非親自去簽土地契約。"], 
+                "荷蘭傳教三寶：建教堂、蓋學校、教新港文。");
+
+            addQ("76. 他們是臺灣罕見被記載在史書中的原住民部落,首領被稱為「番仔王」,荷蘭人稱之為「白晝之王」。全盛時期控制約27個社,荷蘭人打敗西班牙人後,曾派兵攻打部落,希望首領臣服,但最後只獲得允許荷蘭人南北往來時,路過不攻擊的結果。至鄭氏時期,鄭氏政權為獲得米糧及耕種的土地,派兵攻打,該部落也全力反抗,是鄭氏治臺時期最激烈的原住民反抗事件。上述部落分布範圍,應該在今日何地?", 
+                ["宜蘭、花蓮、基隆", "臺中、彰化、南投", "嘉義、臺南、高雄", "桃園、新竹、苗栗"], 
+                1, 
+                ["(A) 錯誤。", 
+                 "(B) 正確。文中提到的「番仔王 / 白晝之王」指的就是臺灣中部的「大肚王」。這個跨部落聯盟的勢力範圍主要集中在今日的「大臺中、彰化、南投」一帶。他們曾讓荷蘭人頭痛，後來遭到鄭氏政權軍屯擴張時的殘酷鎮壓。", 
+                 "(C) 錯誤。", 
+                 "(D) 錯誤。"], 
+                "「白晝之王」大肚王國，稱霸於17世紀的臺灣中部(中彰投)。");
+
+            addQ("<img src='Exam-History-2/p77.jpg' alt='第77題圖表' class='max-w-full rounded-xl shadow-md mb-4 border border-rose-100 mx-auto'>77. 「大肚王國奇遇記」歌舞劇2017年在大肚國小首演。劇中主角穿越時空回到400年前,被當地原住民發現,繼而和他們一起冒險,抵禦鄭氏政權的征伐。之後部落在鄭氏的鎮壓下式微,而主角也回到現實世界。上文中提到的原住民族,應該在分布在附圖中的何處?", 
+                ["甲(北部)", "乙(中部)", "丙(南部)", "丁(東部)"], 
+                1, 
+                ["(A) 錯誤。甲為北臺灣。", 
+                 "(B) 正確。劇名明確指出是「大肚王國」，而大肚王國的勢力範圍正位於臺灣西半部的「中部地區」(大約今臺中市大肚區一帶)，對應地圖中的「乙」區。", 
+                 "(C) 錯誤。丙為南臺灣。", 
+                 "(D) 錯誤。丁為東臺灣。"], 
+                "看到「大肚」，地理位置請直接鎖定臺灣「中部」。");
+
+            addQ("78. 臺灣目前在推動本土語言上不遺餘力,以原住民語來說,共有16族42語系,其中有一支尚未被認證為官方認證語言,但臺南的學校正在積極推動,以求有愈來愈多的學童能學會自己傳統語言。除了透過族人的努力以外,如果想要學習這門語言還可以選擇下列哪一書籍?", 
+                ["荷蘭聯合東印度公司寫的《熱蘭遮城日記》", "巡查御史編纂的臺灣《番社采風圖》", "荷蘭聯合東印度公司寫的《巴達維亞日記》", "荷治時期傳教士編纂的《聖經,馬太福音》"], 
+                3, 
+                ["(A) 錯誤。日記是用荷蘭文寫的公務紀錄。", 
+                 "(B) 錯誤。采風圖是清朝人畫的風俗畫，不含大量原住民文字教學。", 
+                 "(C) 錯誤。日記是荷蘭文。", 
+                 "(D) 正確。題幹描述的是臺南地區的平埔族(西拉雅族)語言復育。在荷治時期，荷蘭傳教士為了傳教，利用羅馬字母拼寫西拉雅語(新港文)，並以此編譯了雙語對照的《聖經(馬太福音)》。這本聖經成為現代學者與族人復育西拉雅語最珍貴的教材與字典。"], 
+                 "荷蘭傳教士留下的《雙語聖經》，意外成為現代原住民尋回母語的密碼本。");
+
+            addQ("79. 在鄭氏政權的多次軍事鎮壓下,大肚王勢力式微,此情況最可能對當地原住民造成什麼影響?", 
+                ["逐漸學習漢人農耕技術", "與統治者召開地方會議", "協助鎮壓漢人抗荷行動", "原住民被迫接受基督教"], 
+                0, 
+                ["(A) 正確。大肚王勢力瓦解後，鄭氏軍隊(漢人)的「軍屯」順利進入中部地區。原住民在失去武裝抵抗能力並與漢人混居後，生活空間被壓縮，為了生存，便開始「逐漸學習漢人的定居農耕技術」，加速了漢化的過程。", 
+                 "(B) 錯誤。地方會議是荷蘭人的制度。", 
+                 "(C) 錯誤。抗荷行動發生在鄭氏來臺之前。", 
+                 "(D) 錯誤。鄭氏並未強迫原住民信基督教。"], 
+                "軍事抵抗失敗後，隨之而來的就是強勢文化的入侵與經濟模式的同化(農耕化)。");
+
+            addQ("80. 「自我們從澎湖遷移到福爾摩沙(即臺灣)之後,獲得新港社人的承諾,以15匹布買得土地。該區域內有河川,土壤肥沃,野獸群生,又有沼澤,多魚類棲息。因此,依據1625年1月15日之決議,我們決定將商館搬遷至此處,建立市街。」上文的記載最可能與下列何者有關?", 
+                ["鄭氏勢力以臺灣為主要根據地", "西班牙人在臺灣北部建立城堡", "清帝國將臺灣納入版圖設立臺灣府", "荷蘭聯合東印度公司在大員的經營"], 
+                3, 
+                ["(A) 錯誤。鄭氏來臺是1661年。", 
+                 "(B) 錯誤。西班牙人未曾佔領澎湖，且據點在北部。", 
+                 "(C) 錯誤。清帝國設臺灣府在1684年。", 
+                 "(D) 正確。文獻中的「從澎湖遷移到福爾摩沙(1624年)」、「新港社(臺南西拉雅族)」、「建立商館與市街(普羅民遮街)」，這段早期開拓史完全是「荷蘭聯合東印度公司」在南臺灣(大員)的專屬記載。"], 
+                 "15匹布買土地的傳說，見證了荷蘭人初期在臺南建立市鎮(普羅民遮街)的歷史。");
+
+            addQ("81. 以下是一段17世紀的文獻記載:「西班牙人每年向該地的已婚原住民課徵二隻雞和三甘當米的稅,原住民感到無法忍受,所以襲擊該地的西班牙城堡,殺了30個西班牙人。」此段記載最可能是描繪附圖中何處的情況?", 
+                ["甲(北部)", "乙(澎湖)", "丙(西南部)", "丁(恆春)"], 
+                0, 
+                ["(A) 正確。文獻清楚點出收稅與被襲擊的是「西班牙人城堡」。在17世紀，西班牙人統治的區域僅限於臺灣北部的雞籠(基隆)與淡水，因此必然發生在地圖中的「甲」區。", 
+                 "(B) 錯誤。澎湖不是西班牙據點。", 
+                 "(C) 錯誤。西南部是荷蘭人據點。", 
+                 "(D) 錯誤。恆春無西班牙人。"], 
+                "看到西班牙人的事蹟，地圖直接點選「北臺灣」。");
+
+            addQ("82. 臺灣某時期的官方記載:「臺灣南部地區的許多居民已經歸順入侵的敵人。這些居民現在已經不屑於我們努力推動的基督信仰,並且因不用再上學而感到高興。」文中所提「入侵的敵人」最可能是指下列何者?", 
+                ["日本政府", "清帝國軍隊", "鄭成功陣營", "荷蘭聯合東印度公司"], 
+                2, 
+                ["(A) 錯誤。日本統治時無此事背景。", 
+                 "(B) 錯誤。清軍攻臺時，荷蘭人早就離開了。", 
+                 "(C) 正確。這段紀錄是由「努力推動基督信仰與學校」的統治者所寫，也就是「荷蘭人」的心聲。荷蘭人抱怨南部居民歸順了「入侵的敵人」，這個在1661年攻入南臺灣，讓原住民不用再上荷蘭學校的敵人，就是「鄭成功陣營」。", 
+                 "(D) 錯誤。荷蘭人是寫紀錄的人，不是入侵的敵人。"], 
+                "原住民高興不用再讀《聖經》學校了，因為荷蘭校長被鄭成功趕跑了。");
+
+            addQ("83. 十九世紀後期,一位美國學者到臺南考察,當地西拉雅族頭目帶著二十餘份文件讓他瀏覽,這些文件以羅馬字母、漢字拼寫,標注清代雍正、乾隆及嘉慶的年號和日期,又蓋有印章。他認為這是極有價值的史料,因此便以槍枝換取了這些文件。這些文件的內容最可能包含下列何者?", 
+                ["大肚王事件始末", "安平洋行貿易資料", "臺灣總督府林野調查紀錄", "原住民與漢人土地交易契約"], 
+                3, 
+                ["(A) 錯誤。大肚王在中部，非臺南西拉雅族。", 
+                 "(B) 錯誤。洋行資料多為英文商務檔案，不會用羅馬拼音混漢字標註清代年號。", 
+                 "(C) 錯誤。總督府是日治時期。", 
+                 "(D) 正確。以「羅馬字母(新港文)」與「漢字」雙語對照，且標註「清代年號」，這正是著名的「新港文書(番仔契)」。這是清領時期，平埔族原住民與漢人進行「土地交易」時所簽訂的法定契約文件。"], 
+                 "新港文書(番仔契) = 羅馬字 + 漢字對照的「清代土地買賣契約」。");
+
+            addQ("84. 有本臺灣史分析某國佔領臺灣的目的,如附表所示。根據表中內容判斷,「某國」最可能是下列何者?<br>政治軍事：對抗當時佔領南臺灣的歐洲國家,並確保馬尼拉的安全。<br>經濟：吸引漢人和日本人至北臺灣貿易。<br>宗教：推展海外傳教事業。", 
+                ["荷蘭", "英國", "法國", "西班牙"], 
+                3, 
+                ["(A) 錯誤。荷蘭佔領的是南臺灣。", 
+                 "(B) 錯誤。英國未曾佔領臺灣進行這類統治。", 
+                 "(C) 錯誤。法國未佔領臺灣。", 
+                 "(D) 正確。表格三大鐵證：1.對抗南臺灣的歐洲國家(防荷蘭)；2.確保「馬尼拉」安全；3.吸引人至「北臺灣」貿易。同時滿足這三個條件的國家，毫無疑問就是「西班牙」。"], 
+                 "馬尼拉 + 北臺灣 = 西班牙的歷史足跡。");
+
+            addQ("85. 新聞報導:2016年7月28日「還原正義連線」成員破壞鄭成功銅像基座,訴求政府須將《原住民族轉型正義條例草案》列入優先審查,並向原住民道歉。帶領此次行動的成員認為,鄭成功雖然被譽為民族英雄,但實際上並未善待原住民。新聞中的成員主張鄭成功須向原住民道歉,是基於下列何種理由?", 
+                ["實施軍屯制度,增加糧食產量", "向原住民傳播基督教", "和各社結盟,以避免各社聯合反抗", "對原住民族進行強烈的軍事鎮壓"], 
+                3, 
+                ["(A) 錯誤。軍屯本身是農業行為，重點是後續搶地。", 
+                 "(B) 錯誤。鄭氏未傳基督教。", 
+                 "(C) 錯誤。這是荷蘭人的手段。", 
+                 "(D) 正確。鄭氏政權為了擴張軍屯土地以解決糧荒，部隊四處侵墾，侵犯了原住民的傳統生存領域。當大肚王等原住民部落奮起反抗時，鄭氏軍隊採取了「強烈的血腥軍事鎮壓」(如沙轆社屠殺事件)，造成原住民族的重大傷亡。這也是當代原民運動要求反思歷史的原因。"], 
+                "歷史的兩面刃：漢人的開臺英雄，往往是原住民眼中的掠奪者與鎮壓者。");
+
+            // 題組 1 (86-87)
+            addQ("86. (題組) 1670年6月英船班丹號與單桅帆船珍珠號駛抵安平港。這是自從荷蘭人被驅離後,首次有歐洲人來臺灣。英國人向臺灣統治者遞呈文書...要求調查商品...當時統治者表達熱烈歡迎,雙方並訂立貿易協議。請問: 文中英國想要從臺灣取得的商品最可能包括下列何者?", 
+                ["稻米", "白銀", "香料", "蔗糖"], 
+                3, 
+                ["(A) 錯誤。稻米主要供內部軍屯自用，極少出口。", 
+                 "(B) 錯誤。臺灣不產白銀。", 
+                 "(C) 錯誤。香料是東南亞特產。", 
+                 "(D) 正確。當時(明鄭時期)臺灣對外出口貿易的兩大經濟特產，就是用來賺取外匯的「蔗糖」與「鹿皮」。因此英國商人來臺最想採購的就是這些農獵特產。"], 
+                "明鄭時期的外銷雙主力：蔗糖、鹿皮。");
+
+            addQ("87. (題組接上題) 文中英國提供給臺灣的物資中,何者對當時臺灣統治者的宏圖大業具有強大吸引力?", 
+                ["藥材", "軍用品", "日用品", "布匹"], 
+                1, 
+                ["(A) 錯誤。藥材非主要戰略物資。", 
+                 "(B) 正確。當時的臺灣統治者(鄭氏政權)最大的「宏圖大業」就是反攻大陸(反清復明)。面對強大的清朝軍隊，他們極度渴望來自歐洲先進的火炮與彈藥，因此英國能提供的「軍用品」具有致命的吸引力。", 
+                 "(C) 錯誤。日用品居次。", 
+                 "(D) 錯誤。布匹雖有進口，但不具備「宏圖大業」的關鍵戰略價值。"], 
+                "明鄭與外國做生意的終極目標：換取火槍火炮打清朝。");
+
+            // 題組 2 (88-90)
+            addQ("88. (題組) 荷蘭在16世紀時,只是西班牙統治的一個行省。獨立後為了求生存,荷蘭聯合東印度公司選擇印尼建立巴達維亞海外殖民市鎮。當荷蘭人前來亞洲貿易時,曾經攻打澳門,遭到殖民該地的歐洲國家擊敗後轉往占領澎湖,但被明朝將領逼退,最後在1624年,轉往另外一個地方發展。請問: 文中雙底線處的歐洲國家(殖民澳門)應為下列何者?", 
+                ["法國", "日本", "西班牙", "葡萄牙"], 
+                3, 
+                ["(A) 錯誤。", 
+                 "(B) 錯誤。", 
+                 "(C) 錯誤。", 
+                 "(D) 正確。在16世紀中葉，取得明朝政府默許，入居並「殖民澳門」的歐洲國家，就是大航海時代的急鋒部隊「葡萄牙」。荷蘭人曾試圖搶奪澳門失敗，才轉向澎湖。"], 
+                 "澳門的歐洲主人：葡萄牙。");
+
+            addQ("89. (題組接上題) 文中的「明朝將領」(逼退荷蘭退出澎湖)應為下列何者?", 
+                ["鄭成功", "顏思齊", "沈有容", "鄭芝龍"], 
+                2, 
+                ["(A) 錯誤。鄭成功是趕走臺灣的荷蘭人。", 
+                 "(B) 錯誤。顏思齊是海商。", 
+                 "(C) 正確。1604年，荷蘭將領韋麻郎佔領澎湖，明朝派去與之交涉，並憑藉軍威成功「逼退」荷蘭人的明朝將領，正是「沈有容」(留下著名的『沈有容諭退紅毛番韋麻郎等』石碑)。", 
+                 "(D) 錯誤。鄭芝龍是海商/明朝軍閥。"], 
+                "澎湖退敵英雄：沈有容。");
+
+            addQ("90. (題組接上題) 文末「轉往另一個地方發展(1624年)」,應是轉往下列何地?", 
+                ["臺灣", "澳門", "菲律賓", "香港"], 
+                0, 
+                ["(A) 正確。荷蘭人兩度佔領澎湖都遭到明朝軍隊驅趕，最後在明朝官員的建議(或默許)下，於「1624年」退出澎湖，轉向當時不屬於中國版圖的「臺灣」(南部大員)建立據點發展。", 
+                 "(B) 錯誤。打不贏澳門。", 
+                 "(C) 錯誤。菲律賓是西班牙的。", 
+                 "(D) 錯誤。香港是19世紀英國的。"], 
+                "荷蘭人來臺的契機：在澎湖被明朝趕走，只好退而求其次佔領臺灣。");
+
+            // 題組 3 (91-93)
+            addQ("91. (題組) 由荷蘭的史學家包樂史主持...編注校譯《熱蘭遮城日誌》...該書中記載:「1634年華商帶領兩艘船從中國抵達此地...並向東印度公司回報說:『在中國多次與官方交涉...因為中國國王嚴令,今年在海上肅清海盜以前,不准任何商船前往任何地方貿易...』」請問: 按照規定,各殖民地的日誌最後都要送回總部,文中這份日誌最後應該會留存在下列何地?", 
+                ["日本長崎", "中國澳門", "印尼巴達維亞", "菲律賓馬尼拉"], 
+                2, 
+                ["(A) 錯誤。長崎是商館。", 
+                 "(B) 錯誤。澳門是葡萄牙的。", 
+                 "(C) 正確。這份日誌是「荷蘭東印度公司(VOC)」的公務紀錄。VOC統管全亞洲事務的最高權力中心「總部」設立於印尼的「巴達維亞(今雅加達)」。因此各地日誌最終都要送回巴達維亞建檔。", 
+                 "(D) 錯誤。馬尼拉是西班牙的。"], 
+                "荷蘭東印度公司在亞洲的行政心臟：印尼巴達維亞。");
+
+            addQ("92. (題組接上題) 文中畫底線部分「不准任何商船前往任何地方貿易」應該是指哪一政策?", 
+                ["鎖國政策", "海禁政策", "貿易政策", "軍屯政策"], 
+                1, 
+                ["(A) 錯誤。鎖國政策是日本實施的。", 
+                 "(B) 正確。明朝政府為了防範沿海的海盜與倭寇，實施了嚴格禁止民間私自出海貿易的政策，這就是中國歷史上著名的「海禁政策」。", 
+                 "(C) 錯誤。貿易政策範圍太廣。", 
+                 "(D) 錯誤。軍屯是種田的政策。"], 
+                "明朝不准百姓下海做生意的鐵腕規定：海禁政策。");
+
+            addQ("93. (題組接上題) 文中荷蘭人來到臺灣後,曾在「大員」修築行政中心。「大員」指的是現今的何處?", 
+                ["新北淡水", "臺南安平", "高雄小港", "雲林北港"], 
+                1, 
+                ["(A) 錯誤。淡水是西班牙的聖多明哥城。", 
+                 "(B) 正確。荷蘭人1624年來到臺灣後，登陸的沙洲被稱為「大員」(Taioan)，也就是後來臺灣名稱的由來。這個地點就在現今的「臺南市安平區」(他們在此建立了熱蘭遮城/安平古堡)。", 
+                 "(C) 錯誤。非大員。", 
+                 "(D) 錯誤。北港是顏思齊登陸地。"], 
+                "大員 = 臺灣名稱起源 = 臺南安平 = 荷蘭大本營。");
+
+            // 題組 4 (94-95)
+            addQ("94. (題組) 以下是一首描述原住民生活方式變遷的新詩...<br>商人忙著算計賺進的錢牧師到處宣揚上帝的愛<br>廣場的紋架與熱蘭遮城的大炮時時刻刻提醒<br>...西拉雅的小朋友收起聖經<br>...紅藍白的三色旗緩緩下降<br>美麗的島嶼再會了我終是過客不是主人<br>請問: 根據這首新詩,西拉雅的小朋友閱讀《聖經》所使用的文字是?", 
+                ["漢字", "荷蘭文", "新港文", "西班牙文"], 
+                2, 
+                ["(A) 錯誤。漢字對當時原住民太難。", 
+                 "(B) 錯誤。荷蘭文不是原住民母語。", 
+                 "(C) 正確。詩中提到「熱蘭遮城、牧師、聖經」，描寫的是荷蘭統治時期。當時的荷蘭傳教士為了讓西拉雅族小朋友能讀懂聖經，利用羅馬字母拼寫西拉雅語，創造了專屬的文字，這被後世稱為「新港文」。", 
+                 "(D) 錯誤。西班牙文是北部使用的。"], 
+                "專為西拉雅人量身打造的羅馬拼音聖經文字：新港文。");
+
+            addQ("95. (題組接上題) 新詩最後提到「美麗的島嶼再會了我終是過客不是主人」,最後離開的過客,是誰?", 
+                ["荷蘭人", "西班牙人", "漢人", "原住民"], 
+                0, 
+                ["(A) 正確。詩中提到「熱蘭遮城大炮」、「紅藍白三色旗下降」、「收起聖經」。這描繪的是1662年，鄭成功率軍攻陷熱蘭遮城，迫使「荷蘭人」投降並降下國旗，最終黯然撤離臺灣的歷史場景。因此這個過客就是荷蘭人。", 
+                 "(B) 錯誤。西班牙人是被荷蘭人趕走的，據點在北部。", 
+                 "(C) 錯誤。漢人留下來墾殖了。", 
+                 "(D) 錯誤。原住民本來就是主人。"], 
+                "1662年降下三色旗黯然離開臺灣的歐洲過客：荷蘭人。");
+
+            return qList;
+        };
+
+        let currentTab = 'login';
+        let learnSubTab = 'sec1';
+        let quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+        let isLearnMenuOpen = false;
+
+        const el = id => document.getElementById(id);
+
+        const syncQuestionsFormat = (state) => {
+            if (!state || !state.questions) return state;
+            if (state.questions.length > 0 && !state.questions[0].exps) {
+                const freshQuestions = generate120Questions();
+                state.questions = state.questions.map(oldQ => {
+                    const freshQ = freshQuestions.find(fq => fq.q === oldQ.q);
+                    if (freshQ) return { ...freshQ, showExplanation: oldQ.showExplanation, selectedAns: oldQ.selectedAns, isCorrect: oldQ.isCorrect };
+                    return oldQ;
+                });
+            }
+            return state;
+        };
+
+        window.toggleLearnMenu = (show) => {
+            isLearnMenuOpen = typeof show === 'boolean' ? show : !isLearnMenuOpen;
+            const drawer = el('learn-drawer');
+            const overlay = el('learn-overlay');
+            if(drawer && overlay) {
+                if(isLearnMenuOpen) {
+                    drawer.classList.remove('-translate-x-full');
+                    overlay.classList.remove('hidden');
+                } else {
+                    drawer.classList.add('-translate-x-full');
+                    overlay.classList.add('hidden');
+                }
+            }
+        };
+
+        const listenToGlobalUsers = () => {
+            if (!isFirebaseInitialized || !currentUser) return;
+            const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+            if(unsubscribeGlobal) unsubscribeGlobal();
+            unsubscribeGlobal = onSnapshot(globalRef, (snap) => {
+                if(snap.exists()) recentUsers = snap.data().users || [];
+                else recentUsers = [];
+                if(currentTab === 'login') renderLogin();
+            });
+        };
+
+        const listenToUserDocument = (name) => {
+            if (!isFirebaseInitialized || !currentUser) {
+                loadLocalData(name);
+                return;
+            }
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, name);
+            if(unsubscribeUser) unsubscribeUser();
+            unsubscribeUser = onSnapshot(userRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, data);
+                    saveLocalData(name);
+                    
+                    if (userData.quizState) {
+                        userData.quizState = syncQuestionsFormat(userData.quizState); 
+                        const cloudStateStr = JSON.stringify(userData.quizState);
+                        const localStateStr = JSON.stringify(quizState);
+                        if (cloudStateStr !== localStateStr) {
+                            quizState = userData.quizState;
+                            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, cloudStateStr); } catch(e) {}
+                            if(currentTab === 'quiz') {
+                                let scrollPos = 0;
+                                const scrollContainer = document.getElementById('quiz-scroll-container');
+                                if (scrollContainer) scrollPos = scrollContainer.scrollTop;
+                                renderQuizView(document.getElementById('main-content'));
+                                setTimeout(() => {
+                                    const newScrollContainer = document.getElementById('quiz-scroll-container');
+                                    if (newScrollContainer && scrollPos > 0) newScrollContainer.scrollTop = scrollPos;
+                                }, 10);
+                                const navStats = document.getElementById('nav-quiz-stats');
+                                if (navStats) {
+                                    if (quizState.active) {
+                                        navStats.classList.remove('hidden');
+                                        navStats.classList.add('flex');
+                                        updateQuizStats();
+                                    } else {
+                                        navStats.classList.add('hidden');
+                                        navStats.classList.remove('flex');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [new Date().toISOString()], quizState: null };
+                    setDoc(userRef, userData, { merge: true });
+                }
+                if(currentTab === 'favorites') renderFavorites();
+                else if(currentTab === 'mistakes') renderMistakes();
+                else if(currentTab === 'history') renderHistory();
+            }, (error) => console.error("Listen user error", error));
+        };
+
+        const saveUserDataToCloud = async () => {
+            saveLocalData(username);
+            if (!isFirebaseInitialized || !currentUser || !username) return;
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+            try { await setDoc(userRef, userData, { merge: true }); } catch(e) { console.error("Firebase save error:", e); }
+        };
+
+        const loadLocalData = (name) => {
+            try {
+                const localData = localStorage.getItem(`${COLLECTION_NAME}_${name}_data`);
+                if (localData) userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, JSON.parse(localData));
+            } catch(e) {}
+        };
+
+        const saveLocalData = (name) => {
+            try { if (name) localStorage.setItem(`${COLLECTION_NAME}_${name}_data`, JSON.stringify(userData)); } catch(e) {}
+        };
+
+        const saveQuizState = () => {
+            try { if(username) localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e) {}
+            userData.quizState = quizState;
+            saveUserDataToCloud();
+        };
+
+        const loadLocalQuizState = () => {
+            if (userData.quizState) { quizState = syncQuestionsFormat(userData.quizState); return; }
+            try {
+                const localQuiz = localStorage.getItem(`${COLLECTION_NAME}_${username}_quiz`);
+                if (localQuiz) {
+                    const q = JSON.parse(localQuiz);
+                    if (q && q.active) quizState = syncQuestionsFormat(q);
+                }
+            } catch(e) {}
+        };
+
+        const initApp = async () => {
+            renderApp();
+            const lastUser = localStorage.getItem(`${COLLECTION_NAME}_last_user`);
+            if (isFirebaseInitialized) {
+                await initAuth(); 
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUser = user;
+                        listenToGlobalUsers();
+                        if (lastUser) {
+                            username = lastUser;
+                            setTimeout(() => listenToUserDocument(username), 200);
+                            loadLocalQuizState();
+                            renderMain();
+                        } else renderLogin();
+                    } else renderLogin();
+                });
+            } else {
+                if (lastUser) {
+                    username = lastUser;
+                    loadLocalData(username);
+                    loadLocalQuizState();
+                    renderMain();
+                } else renderLogin();
+            }
+        };
+
+        window.handleLogin = async (name) => {
+            if(!name.trim()) {
+                const inputEl = document.getElementById('usernameInput');
+                inputEl.classList.add('border-red-500', 'bg-red-50');
+                inputEl.placeholder = "名稱不能為空！";
+                setTimeout(() => {
+                    inputEl.classList.remove('border-red-500', 'bg-red-50');
+                    inputEl.placeholder = "✍️ 請輸入您的姓名/座號";
+                }, 2000);
+                return;
+            }
+            username = name;
+            localStorage.setItem(`${COLLECTION_NAME}_last_user`, username);
+            if (isFirebaseInitialized && currentUser) {
+                const now = new Date().toISOString();
+                const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                try {
+                    const snap = await getDoc(userRef);
+                    if (snap.exists()) {
+                        userData = Object.assign({ favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, snap.data());
+                        if (userData.quizState) {
+                            quizState = syncQuestionsFormat(userData.quizState);
+                            try { localStorage.setItem(`${COLLECTION_NAME}_${username}_quiz`, JSON.stringify(quizState)); } catch(e){}
+                        }
+                    } else loadLocalData(username);
+                    if (!userData.loginHistory) userData.loginHistory = [];
+                    userData.loginHistory.push(now);
+                    if (userData.loginHistory.length > 50) userData.loginHistory = userData.loginHistory.slice(-50);
+                    await setDoc(userRef, userData, { merge: true });
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const gSnap = await getDoc(globalRef);
+                    let users = gSnap.exists() ? gSnap.data().users || [] : [];
+                    users = users.filter(u => u.name !== username);
+                    users.push({ name: username, lastLogin: now });
+                    if(users.length > 10) users = users.slice(-10);
+                    await setDoc(globalRef, { users }, { merge: true });
+                } catch(e) { console.error("Login data sync error:", e); }
+                listenToUserDocument(username);
+            } else {
+                loadLocalData(username);
+                if (!userData.loginHistory) userData.loginHistory = [];
+                userData.loginHistory.push(new Date().toISOString());
+                saveLocalData(username);
+            }
+            renderMain();
+            initAudio(); // Initialize audio on first user interaction
+        };
+
+        const renderApp = () => { el('app').innerHTML = `<div id="view-container" class="w-full h-full flex flex-col"></div>`; };
+
+        window.renderLogin = () => {
+            currentTab = 'login';
+            el('view-container').innerHTML = `
+                <div class="flex-1 flex flex-col items-center justify-center relative overflow-hidden p-6 z-0">
+                    <div class="absolute top-6 right-6 z-20">
+                        <div class="flex flex-col items-end gap-3 w-full md:w-auto">
+                            <div class="glass-card px-4 py-2 rounded-full shadow-sm text-sm font-bold text-rose-800 flex items-center border border-rose-200">
+                                <span class="status-dot ${connectionStatus === 'loading' ? 'status-loading' : connectionStatus === 'success' ? 'status-success' : 'status-error'}"></span>
+                                ${connectionStatus === 'loading' ? '雲端讀取中... ⏳' : connectionStatus === 'success' ? '雲端已同步 ☁️✨' : '雲端連線失敗 ❌'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-card p-8 md:p-12 rounded-[2.5rem] shadow-xl z-10 w-[42rem] max-w-[95vw] text-center border-2 border-dashed border-rose-300">
+                        <div class="w-24 h-24 bg-rose-50 rounded-full mx-auto mb-6 flex items-center justify-center shadow-inner border border-rose-100">
+                            <span class="text-6xl">🎒</span>
+                        </div>
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-rose-500 mb-4 tracking-widest leading-tight">歷史會考衝刺<br>🌟</h1>
+                        <p class="text-rose-600 mb-10 text-xl md:text-2xl font-bold bg-rose-50 inline-block px-5 py-2 rounded-full border border-rose-200 shadow-sm">單元2 大航海時代的台灣 ⛵</p>
+                        <div class="space-y-6">
+                            <input type="text" id="usernameInput" placeholder="✍️ 點擊這裡輸入名字進入" class="w-full px-6 py-5 text-xl rounded-full border-2 border-rose-200 focus:outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-400/20 text-center transition-all bg-white shadow-inner text-rose-700">
+                            <button onclick="handleLogin(document.getElementById('usernameInput').value)" class="w-full bg-rose-400 hover:bg-rose-500 text-white font-bold py-5 px-6 text-2xl rounded-full shadow-md hover:shadow-lg transition-all transform hover:-translate-y-1">
+                                進入 學習 / 測驗 🚀
+                            </button>
+                        </div>
+                        <div class="mt-10 border-t border-rose-100 pt-6">
+                            <p class="text-base text-rose-400 mb-4 font-bold tracking-wide">☁️ 雲端最近登入 👥</p>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                ${recentUsers.length > 0 ? recentUsers.slice().reverse().slice(0, 8).map(u => `<button onclick="handleLogin('${u.name}')" class="text-base font-bold bg-white border-2 border-rose-100 text-rose-600 hover:bg-rose-50 hover:border-rose-300 px-5 py-2 rounded-full shadow-sm transition-all">${u.name}</button>`).join('') : `<span class="text-base text-rose-400 bg-white/50 px-5 py-2.5 rounded-full border border-rose-100">尚無紀錄或尚未連線</span>`}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.renderMain = () => {
+            el('view-container').innerHTML = `
+                <nav class="bg-white/90 backdrop-blur-md border-b-2 border-dashed border-rose-200 shadow-sm z-20 shrink-0">
+                    <div class="w-full px-2 sm:px-4 md:px-6 lg:px-8 mx-auto py-3">
+                        <div class="flex justify-between items-center h-16 w-full overflow-x-auto scrollbar-hide gap-2 md:gap-4">
+                            <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+                                <span class="font-extrabold text-xl md:text-2xl lg:text-xl xl:text-3xl tracking-widest hidden lg:flex items-center shrink-0 text-rose-500 drop-shadow-sm">
+                                    <span class="bg-rose-50 text-rose-600 p-2 rounded-full mr-2 xl:mr-3 shadow-inner border border-rose-100">🎒</span>大航海時代
+                                </span>
+                                <div class="flex items-center bg-rose-50 px-3 py-1.5 md:px-4 rounded-full border border-rose-200 shadow-sm text-sm md:text-base font-bold shrink-0 text-rose-600">
+                                    <span class="status-dot ${connectionStatus === 'loading' ? 'bg-amber-400' : connectionStatus === 'success' ? 'bg-emerald-400' : 'bg-red-400'}"></span>
+                                    <span class="hidden sm:inline">${connectionStatus === 'loading' ? '讀取中' : connectionStatus === 'success' ? '已同步雲端' : '連線失敗'}</span>
+                                </div>
+                                <div id="nav-quiz-stats" class="hidden items-center ml-1 sm:ml-2 animate-fade-in shrink-0 gap-2 md:gap-3">
+                                    <div class="flex items-center bg-white px-3 py-1.5 md:px-4 rounded-full shadow-sm border border-slate-200 text-sm md:text-base font-bold shrink-0 text-slate-700">
+                                        <span class="text-emerald-500 flex items-center"><span class="mr-1">✅</span><span id="nav-stat-correct">0</span></span>
+                                        <div class="w-px bg-slate-200 h-4 md:h-5 mx-2 md:mx-3"></div>
+                                        <span class="text-rose-500 flex items-center"><span class="mr-1">❌</span><span id="nav-stat-incorrect">0</span></span>
+                                    </div>
+                                    <div class="hidden xl:flex flex-col w-24 lg:w-32 shrink-0">
+                                        <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner border border-slate-200">
+                                            <div id="nav-stat-progress-bar" class="bg-rose-400 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center space-x-2 md:space-x-3 shrink-0 pl-1 md:pl-2">
+                                <button onclick="switchTab('learn')" id="nav-learn" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">📚</span>學習</button>
+                                <button onclick="switchTab('quiz')" id="nav-quiz" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">🎯</span>測驗</button>
+                                <button onclick="switchTab('mistakes')" id="nav-mistakes" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">🩹</span>錯題</button>
+                                <button onclick="switchTab('favorites')" id="nav-favorites" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">💖</span>最愛</button>
+                                <button onclick="switchTab('history')" id="nav-history" class="whitespace-nowrap px-3 py-1.5 md:px-5 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2 shadow-sm"><span class="mr-1.5">📜</span>紀錄</button>
+                                
+                                <div class="ml-1 sm:ml-2 flex items-center pl-2 sm:pl-3 border-l-2 border-dashed border-rose-200 shrink-0 whitespace-nowrap gap-1 md:gap-2">
+                                    <div class="text-sm md:text-base font-bold bg-rose-50 px-3 py-1.5 md:px-4 md:py-2 rounded-full text-rose-600 border border-rose-200 shadow-sm flex items-center">
+                                        <span class="mr-1 lg:mr-2">👤</span>${username}
+                                    </div>
+                                    <button onclick="deleteUserData()" class="text-rose-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 p-1.5 md:p-2 rounded-full transition-all text-base md:text-lg" title="刪除帳號紀錄">🗑️</button>
+                                    <button onclick="logout()" class="text-rose-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 p-1.5 md:p-2 rounded-full transition-all text-base md:text-lg" title="登出">🚪</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </nav>
+                <div id="main-content" class="flex-1 overflow-hidden flex flex-col w-full z-10 relative"></div>
+            `;
+            switchTab('learn');
+        };
+
+        window.deleteUserData = async () => {
+            if(!confirm(`確定要從雲端刪除選手 ${username} 的所有資料？此操作無法復原！`)) return;
+            if(!confirm(`⚠️ 再次警告：這將永久刪除 ${username} 的所有進度、錯題與紀錄！\n\n您真的確定要執行刪除嗎？`)) return;
+            try {
+                if (isFirebaseInitialized && currentUser) {
+                    const globalRef = doc(db, 'artifacts', appId, 'public', 'data', DOC_GLOBAL, COLLECTION_NAME);
+                    const snap = await getDoc(globalRef);
+                    if(snap.exists()) {
+                        let users = snap.data().users || [];
+                        users = users.filter(u => u.name !== username);
+                        await setDoc(globalRef, { users }, { merge: true });
+                    }
+                    const userRef = doc(db, 'artifacts', appId, 'public', 'data', `${COLLECTION_NAME}_profiles`, username);
+                    await setDoc(userRef, { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null }, { merge: true });
+                }
+                localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_data`);
+                localStorage.removeItem(`${COLLECTION_NAME}_${username}_quiz`);
+                userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+                if(unsubscribeUser) unsubscribeUser();
+                username = '';
+                renderLogin();
+            } catch(e) { alert("刪除失敗，請稍後再試"); }
+        };
+
+        window.logout = () => {
+            username = '';
+            userData = { favorites: [], mistakes: [], quizHistory: [], loginHistory: [], quizState: null };
+            quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+            localStorage.removeItem(`${COLLECTION_NAME}_last_user`);
+            if(unsubscribeUser) unsubscribeUser();
+            renderLogin();
+        };
+
+        window.switchTab = (tab) => {
+            currentTab = tab;
+            const configs = {
+                'learn': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-emerald-400 bg-emerald-500 text-white shadow-md transform scale-105', inactive: 'border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 shadow-sm' },
+                'quiz': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-blue-400 bg-blue-500 text-white shadow-md transform scale-105', inactive: 'border-blue-200 bg-white text-blue-600 hover:bg-blue-50 shadow-sm' },
+                'mistakes': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-amber-400 bg-amber-500 text-white shadow-md transform scale-105', inactive: 'border-amber-200 bg-white text-amber-600 hover:bg-amber-50 shadow-sm' },
+                'favorites': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-rose-400 bg-rose-500 text-white shadow-md transform scale-105', inactive: 'border-rose-200 bg-white text-rose-600 hover:bg-rose-50 shadow-sm' },
+                'history': { base: 'whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 rounded-full text-sm md:text-base font-bold transition-all duration-200 border-2', active: 'border-purple-400 bg-purple-500 text-white shadow-md transform scale-105', inactive: 'border-purple-200 bg-white text-purple-600 hover:bg-purple-50 shadow-sm' }
+            };
+
+            Object.keys(configs).forEach(t => {
+                const btn = el(`nav-${t}`);
+                if(btn) {
+                    btn.className = `${configs[t].base} ${t === tab ? configs[t].active : configs[t].inactive}`;
+                }
+            });
+
+            const navStats = el('nav-quiz-stats');
+            if (navStats) {
+                if (tab === 'quiz' && quizState.active) {
+                    navStats.classList.remove('hidden'); navStats.classList.add('flex'); updateQuizStats();
+                } else { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+            }
+            const content = el('main-content');
+            if(tab === 'learn') renderLearnView(content);
+            if(tab === 'quiz') renderQuizView(content);
+            if(tab === 'mistakes') renderMistakes(content);
+            if(tab === 'favorites') renderFavorites(content);
+            if(tab === 'history') renderHistory(content);
+        };
+
+        const renderLearnView = (container) => {
+            const currentData = learnData.find(d => d.id === learnSubTab);
+            const themeColors = {
+                'orange': 'text-orange-600 bg-orange-50 border-orange-200',
+                'teal': 'text-teal-600 bg-teal-50 border-teal-200',
+                'emerald': 'text-emerald-600 bg-emerald-50 border-emerald-200',
+                'purple': 'text-purple-600 bg-purple-50 border-purple-200',
+                'pink': 'text-pink-600 bg-pink-50 border-pink-200',
+                'amber': 'text-amber-600 bg-amber-50 border-amber-200',
+                'rose': 'text-rose-600 bg-rose-50 border-rose-200',
+                'blue': 'text-blue-600 bg-blue-50 border-blue-200'
+            };
+            const activeTheme = currentData && currentData.theme ? themeColors[currentData.theme] : 'text-teal-600 bg-teal-50 border-teal-200';
+
+            container.innerHTML = `
+                <div class="w-full ${activeTheme} border-b-2 border-dashed p-4 flex items-center shadow-sm z-10 shrink-0 overflow-hidden transition-colors duration-300">
+                    <button onclick="toggleLearnMenu(true)" class="text-current hover:opacity-70 focus:outline-none flex items-center px-4 py-2 bg-white rounded-full border border-current shadow-sm mr-4 transition-all">
+                        <i class="fas fa-bars text-lg md:mr-2"></i>
+                        <span class="font-bold text-sm md:text-base hidden md:inline tracking-wide">重點講義目錄</span>
+                    </button>
+                    <span class="font-extrabold text-lg md:text-xl lg:text-2xl truncate drop-shadow-sm" id="current-learn-title">${currentData ? currentData.title : ''}</span>
+                </div>
+                <div id="learn-overlay" onclick="toggleLearnMenu(false)" class="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-30 hidden transition-opacity duration-300"></div>
+                <div id="learn-drawer" class="fixed inset-y-0 left-0 w-[24rem] max-w-[85vw] bg-white border-r-2 border-dashed border-rose-200 z-40 transform -translate-x-full transition-transform duration-300 ease-in-out overflow-y-auto shadow-2xl flex flex-col">
+                    <div class="p-5 bg-rose-50 flex justify-between items-center border-b-2 border-dashed border-rose-200 shrink-0">
+                        <span class="font-extrabold text-xl text-rose-600">📑 學習目錄 🗺️</span>
+                        <button onclick="toggleLearnMenu(false)" class="text-rose-400 hover:text-rose-600 transition-colors bg-white w-8 h-8 rounded-full flex items-center justify-center shadow-sm border border-rose-200"><i class="fas fa-times"></i></button>
+                        </div>
+                    <ul class="py-4 flex-1 px-3 space-y-2">
+                        ${learnData.map(d => {
+                            const isSelected = learnSubTab === d.id;
+                            const themeConfig = {
+                                'orange': isSelected ? 'bg-orange-500 text-white border-orange-600 shadow-md' : 'text-orange-600 border-orange-200 hover:bg-orange-50',
+                                'teal': isSelected ? 'bg-teal-500 text-white border-teal-600 shadow-md' : 'text-teal-600 border-teal-200 hover:bg-teal-50',
+                                'emerald': isSelected ? 'bg-emerald-500 text-white border-emerald-600 shadow-md' : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50',
+                                'purple': isSelected ? 'bg-purple-500 text-white border-purple-600 shadow-md' : 'text-purple-600 border-purple-200 hover:bg-purple-50',
+                                'pink': isSelected ? 'bg-pink-500 text-white border-pink-600 shadow-md' : 'text-pink-600 border-pink-200 hover:bg-pink-50',
+                                'amber': isSelected ? 'bg-amber-500 text-white border-amber-600 shadow-md' : 'text-amber-600 border-amber-200 hover:bg-amber-50',
+                                'rose': isSelected ? 'bg-rose-500 text-white border-rose-600 shadow-md' : 'text-rose-600 border-rose-200 hover:bg-rose-50',
+                                'blue': isSelected ? 'bg-blue-500 text-white border-blue-600 shadow-md' : 'text-blue-600 border-blue-200 hover:bg-blue-50'
+                            };
+                            const activeClass = d.theme ? themeConfig[d.theme] : (isSelected ? 'bg-teal-500 text-white border-teal-600' : 'text-teal-600 border-teal-200');
+                            return `
+                            <li>
+                                <button onclick="selectLearnTab('${d.id}')" id="ltab-${d.id}" class="w-full text-left px-4 py-3 text-base md:text-lg font-bold rounded-full transition-all border-2 ${activeClass}">
+                                    ${d.title}
+                                </button>
+                            </li>
+                        `}).join('')}
+                    </ul>
+                </div>
+                <div class="flex-1 p-4 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden w-full relative z-10" id="learn-content-area"></div>
+            `;
+            renderLearnContent();
+        };
+
+        window.selectLearnTab = (id) => {
+            learnSubTab = id;
+            renderLearnView(el('main-content')); 
+            toggleLearnMenu(false);
+        };
+
+        window.renderLearnContent = () => {
+            const area = el('learn-content-area');
+            if(!area) return;
+            const data = learnData.find(d => d.id === learnSubTab);
+            area.innerHTML = `<div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto animate-fade-in pb-12">${data.content}</div>`;
+        };
+
+        const renderQuizView = (container) => {
+            if(!quizState.active) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 overflow-y-auto relative z-10">
+                        <div class="glass-card p-8 md:p-12 rounded-[2.5rem] shadow-xl text-center max-w-4xl lg:max-w-5xl w-full border-2 border-dashed border-blue-300 relative overflow-hidden bg-white/95">
+                            <div class="w-24 h-24 md:w-32 md:h-32 bg-blue-50 rounded-full mx-auto mb-8 flex items-center justify-center shadow-inner border border-blue-200">
+                                <span class="text-6xl md:text-7xl">🎯</span>
+                            </div>
+                            <h2 class="text-3xl md:text-5xl font-extrabold mb-6 text-blue-600 tracking-wide">單元2 大航海時代的台灣<br>95題 達人挑戰 🏆</h2>
+                            <p class="text-blue-800/80 mb-10 text-xl md:text-2xl leading-loose">
+                                從荷西統治到明鄭政權，驗收您的歷史精熟度！<br>
+                                <span class="bg-blue-100 text-blue-800 font-bold px-5 py-2 rounded-full inline-block mt-6 border border-blue-200 shadow-sm">🌊 瀑布流模式</span><br>
+                                <span class="text-lg md:text-xl text-rose-500 mt-3 block font-bold">🎯 點擊選項後，詳細解析將直接顯示在每個選項框框內，無須滑動對照！</span>
+                            </p>
+                            <button onclick="startQuiz()" class="w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white font-bold py-5 px-16 text-2xl md:text-3xl rounded-full shadow-md transition-all transform hover:-translate-y-1 hover:shadow-lg">
+                                開始挑戰 🚀🔥
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                renderQuizWaterfall(container);
+            }
+        };
+
+        window.startQuiz = () => {
+            initAudio(); // Explicitly init audio on button click
+            const qList = [...generate120Questions()].map(q => ({
+                ...q, selectedAns: null, showExplanation: false, isCorrect: false
+            }));
+            // If you want random order, uncomment the following line and comment the above line:
+            // const qList = [...generate120Questions()].sort(() => 0.5 - Math.random()).map(q => ({ ...q, selectedAns: null, showExplanation: false, isCorrect: false }));
+            quizState = { active: true, isFinished: false, questions: qList };
+            saveQuizState();
+            renderQuizView(el('main-content'));
+            const navStats = el('nav-quiz-stats');
+            if (navStats) { navStats.classList.remove('hidden'); navStats.classList.add('flex'); }
+            updateQuizStats();
+        };
+
+        window.updateQuizStats = () => {
+            if (!quizState.active) return;
+            let correct = 0; let incorrect = 0; let answered = 0;
+            const total = quizState.questions.length;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answered++;
+                    if (q.isCorrect) correct++; else incorrect++;
+                }
+            });
+            const progressPercent = (answered / total) * 100;
+            const elCorrect = document.getElementById('nav-stat-correct');
+            const elIncorrect = document.getElementById('nav-stat-incorrect');
+            const elBar = document.getElementById('nav-stat-progress-bar');
+            if (elCorrect) elCorrect.innerText = correct;
+            if (elIncorrect) elIncorrect.innerText = incorrect;
+            if (elBar) elBar.style.width = progressPercent + '%';
+        };
+
+        window.restartQuizWithConfirm = () => {
+            if(confirm('確定要重新開始挑戰嗎？這將會清除目前的畫面，並產生全新的測驗題目！')) startQuiz();
+        };
+
+        const renderQuizWaterfall = (container) => {
+            const total = quizState.questions.length;
+            const isFinished = quizState.isFinished;
+            
+            let headerHtml = isFinished 
+                ? ` <div class="glass-card flex flex-col md:flex-row justify-between items-center rounded-3xl p-5 md:p-6 shadow-md border-2 border-dashed border-teal-300 mb-10 sticky top-0 z-50">
+                        <div class="flex items-center mb-4 md:mb-0">
+                            <span class="text-5xl mr-4 drop-shadow-sm">🏆✨</span>
+                            <div>
+                                <h2 class="text-2xl md:text-3xl font-extrabold text-teal-600">測驗結算完成 🎉</h2>
+                                <p class="text-teal-700 font-bold text-lg mt-1">總分：<span class="text-3xl md:text-4xl text-teal-500 font-black">${quizState.scorePercent}</span> 分 (答對 ${quizState.correctCount} / 共 ${total} 題)</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <button onclick="switchTab('mistakes')" class="text-base md:text-lg text-amber-600 hover:bg-amber-50 px-4 py-2 rounded-full font-bold transition-colors flex items-center border-2 border-amber-200 bg-white shadow-sm"><span class="mr-2">🩹</span>前往錯題本</button>
+                            <button onclick="restartQuizWithConfirm()" class="text-base md:text-lg text-white bg-teal-500 hover:bg-teal-600 px-4 py-2 rounded-full font-bold transition-colors flex items-center shadow-md"><span class="mr-2">🔄</span>重新挑戰</button>
+                        </div>
+                    </div>`
+                : ` <div class="flex justify-end mb-4">
+                        <button onclick="clearQuizHistory()" class="text-sm md:text-base text-rose-500 hover:text-white hover:bg-rose-400 px-4 py-2 rounded-full font-bold transition-colors flex items-center border-2 border-rose-200 bg-white shadow-sm"><span class="mr-2">🚪</span>放棄作答</button>
+                        </div>`;
+
+            let html = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 scrollbar-hide relative z-10" id="quiz-scroll-container">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto relative">
+                        ${headerHtml}
+                        <div id="questions-list" class="space-y-10 w-full">
+            `;
+            quizState.questions.forEach((_, qIdx) => { html += `<div id="q-block-${qIdx}" class="bg-white rounded-[2rem] shadow-sm overflow-hidden border-2 border-dashed border-blue-200 transition-all w-full p-2">${generateSingleQuestionHtml(qIdx)}</div>`; });
+            html += `</div>`;
+            
+            if (!isFinished) {
+                html += `
+                        <button onclick="finishQuizWaterfall()" class="w-full mt-16 bg-blue-500 hover:bg-blue-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-full shadow-md transition-all transform hover:-translate-y-1 flex items-center justify-center break-words border-b-4 border-blue-700">
+                            🏁 完成測驗並結算成績 📊🎉
+                        </button>`;
+            } else {
+                 html += `
+                        <button onclick="restartQuizWithConfirm()" class="w-full mt-16 bg-teal-500 hover:bg-teal-600 text-white font-extrabold py-6 md:py-8 text-2xl md:text-4xl rounded-full shadow-md transition-all transform hover:-translate-y-1 flex items-center justify-center break-words border-b-4 border-teal-700">
+                            🔄 重新開始挑戰 🚀💪
+                        </button>`;                
+            }
+            html += `</div></div>`;
+            container.innerHTML = html;
+        };
+
+        const generateSingleQuestionHtml = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            let optionsHtml = '';
+            
+            q.opts.forEach((opt, i) => {
+                let btnClass = "w-full text-left p-3 md:p-4 text-lg md:text-xl rounded-[1.5rem] border-2 transition-all duration-200 flex flex-col items-start group relative overflow-hidden ";
+                let iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-3 md:mr-4 font-extrabold text-lg md:text-xl transition-colors shrink-0 shadow-inner group-hover:bg-blue-100 group-hover:text-blue-700 border border-blue-100">${String.fromCharCode(65+i)}</span>`;
+                
+                let optExpHtml = '';
+                
+                if (!q.showExplanation) {
+                    btnClass += "border-blue-100 hover:border-blue-400 hover:bg-blue-50/50 bg-white cursor-pointer hover:shadow-sm";
+                } else {
+                    let expText = (q.exps && q.exps[i]) ? q.exps[i] : '無詳細解析';
+                    
+                    if (i === q.ans) {
+                        btnClass += "border-emerald-400 bg-emerald-50/50 text-emerald-800 shadow-sm z-10";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center mr-3 md:mr-4 font-bold text-xl md:text-2xl shrink-0 shadow-sm border border-emerald-600">✅</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-emerald-200 bg-white text-emerald-800 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-emerald-600">🎯 解析：</span>${expText}</div>`;
+                    } else if (i === q.selectedAns) {
+                        btnClass += "border-rose-400 bg-rose-50/50 text-rose-800";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-rose-500 text-white flex items-center justify-center mr-3 md:mr-4 font-bold text-xl md:text-2xl shrink-0 shadow-sm border border-rose-600">❌</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-rose-200 bg-white text-rose-800 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-rose-600">💡 解析：</span>${expText}</div>`;
+                    } else {
+                        btnClass += "border-slate-200 bg-slate-50/50 opacity-80 cursor-not-allowed";
+                        iconHtml = `<span class="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center mr-3 md:mr-4 font-extrabold text-lg md:text-xl shrink-0 border border-slate-300">${String.fromCharCode(65+i)}</span>`;
+                        optExpHtml = `<div class="mt-2 p-2 md:p-3 rounded-[1rem] text-sm md:text-base border border-slate-200 bg-white text-slate-600 animate-fade-in w-full leading-normal font-medium"><span class="font-bold mr-2 text-slate-400">💡 解析：</span>${expText}</div>`;
+                    }
+                }
+
+                optionsHtml += `
+                    <button ${q.showExplanation ? 'disabled' : `onclick="answerWaterfallQuestion(${qIdx}, ${i})"`} class="${btnClass}">
+                        <div class="flex items-center w-full">
+                            ${iconHtml}
+                            <span class="flex-1 leading-relaxed break-words z-10 text-left ${q.showExplanation && i === q.ans ? 'text-emerald-700 font-bold' : 'text-slate-700 font-medium'}">${opt}</span>
+                        </div>
+                        ${optExpHtml}
+                    </button>
+                `;
+            });
+
+            let generalExpHtml = '';
+            if (q.showExplanation && q.generalExp) {
+                generalExpHtml = `
+                    <div class="mt-3 p-3 md:p-4 bg-blue-50 border-2 border-dashed border-blue-200 rounded-[1.5rem] relative overflow-hidden animate-fade-in text-left shadow-sm">
+                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-blue-800"><span class="mr-2">📝 重點補充：</span>${q.generalExp}</p>
+                    </div>
+                `;
+            }
+
+            const isFav = userData.favorites && userData.favorites.includes(q.q);
+            const favIconHtml = isFav 
+                ? '<i class="fa-solid fa-heart text-rose-500 drop-shadow-sm"></i>' 
+                : '<i class="fa-regular fa-heart text-slate-300 hover:text-rose-400 drop-shadow-sm"></i>';
+
+            let statusTag = '';
+            let bgGradient = '';
+            if (q.showExplanation) {
+                if (q.selectedAns === q.ans) {
+                    statusTag = '<span class="text-emerald-600 font-bold text-lg md:text-xl flex items-center bg-emerald-50 px-4 py-1.5 rounded-full border border-emerald-200 shadow-sm"><span class="mr-2">✅</span>答對 🎉</span>';
+                    bgGradient = 'bg-emerald-50/30';
+                } else if (q.selectedAns === -1) {
+                    statusTag = '<span class="text-amber-600 font-bold text-lg md:text-xl flex items-center bg-amber-50 px-4 py-1.5 rounded-full border border-amber-200 shadow-sm"><span class="mr-2">⚠️</span>未作答</span>';
+                    bgGradient = 'bg-amber-50/30';
+                } else {
+                    statusTag = '<span class="text-rose-600 font-bold text-lg md:text-xl flex items-center bg-rose-50 px-4 py-1.5 rounded-full border border-rose-200 shadow-sm"><span class="mr-2">❌</span>答錯 💦</span>';
+                    bgGradient = 'bg-rose-50/30';
+                }
+            } else {
+                statusTag = '<span class="text-blue-500 font-bold text-base md:text-lg flex items-center bg-blue-50 px-4 py-1.5 rounded-full border border-blue-200 shadow-sm"><span class="mr-2">✍️</span>作答區</span>';
+                bgGradient = 'bg-white';
+            }
+
+            return `
+                <div class="px-5 md:px-8 py-4 border-b-2 border-dashed border-blue-100 flex justify-between items-center transition-colors rounded-t-[2rem] ${bgGradient}">
+                    <div class="flex items-center">
+                        <span class="font-extrabold text-blue-600 text-lg md:text-xl bg-white px-4 py-1.5 rounded-full border-2 border-blue-200 shadow-sm">🤔 Q ${qIdx + 1}</span>
+                        <button onclick="toggleQuizFavorite(${qIdx})" class="ml-4 text-[1.8rem] md:text-4xl hover:scale-110 transition-transform focus:outline-none" title="加入/取消最愛">
+                            ${favIconHtml}
+                        </button>
+                    </div>
+                    ${statusTag}
+                </div>
+                <div class="p-5 md:p-8 w-full overflow-hidden">
+                    <h3 class="text-xl md:text-2xl font-extrabold text-slate-800 mb-4 leading-relaxed break-words text-left">${q.q}</h3>
+                    <div class="space-y-2 w-full">
+                        ${optionsHtml}
+                    </div>
+                    ${generalExpHtml}
+                </div>
+            `;
+        };
+
+        window.toggleQuizFavorite = (qIdx) => {
+            const q = quizState.questions[qIdx];
+            const qText = q.q;
+            if (!userData.favorites) userData.favorites = [];
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) userData.favorites.splice(idx, 1);
+            else userData.favorites.push(qText);
+            saveUserDataToCloud();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+        };
+
+        window.answerWaterfallQuestion = (qIdx, optIdx) => {
+            const q = quizState.questions[qIdx];
+            if(q.showExplanation) return; 
+
+            const isCorrect = optIdx === q.ans;
+            q.selectedAns = optIdx;
+            q.showExplanation = true;
+            q.isCorrect = isCorrect;
+            
+            if (isCorrect) {
+                playCorrectSound();
+                confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 }, zIndex: 10000, colors: ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'] });
+            } else {
+                playWrongSound();
+                const mistakeId = q.q; 
+                if(!userData.mistakes) userData.mistakes = [];
+                const exists = userData.mistakes.find(m => m.id === mistakeId);
+                if(!exists) {
+                    userData.mistakes.push({
+                        id: mistakeId, q: q.q, opts: q.opts, ans: q.ans, exps: q.exps, generalExp: q.generalExp, time: new Date().toISOString()
+                    });
+                    saveUserDataToCloud();
+                }
+            }
+            saveQuizState();
+            const block = document.getElementById(`q-block-${qIdx}`);
+            if (block) block.innerHTML = generateSingleQuestionHtml(qIdx);
+            updateQuizStats();
+        };
+
+        window.finishQuizWaterfall = async () => {
+            let correctCount = 0; let answeredCount = 0;
+            quizState.questions.forEach(q => {
+                if (q.showExplanation && q.selectedAns !== -1) {
+                    answeredCount++;
+                    if (q.isCorrect) correctCount++;
+                }
+            });
+            if (answeredCount < quizState.questions.length) {
+                if(!confirm(`您還有 ${quizState.questions.length - answeredCount} 題尚未作答，確定要直接交卷結算嗎？未作答的題目將以錯誤計算。`)) return;
+            }
+            quizState.questions.forEach(q => {
+                if (!q.showExplanation) {
+                    q.showExplanation = true; q.isCorrect = false; q.selectedAns = -1;
+                }
+            });
+            quizState.isFinished = true; quizState.correctCount = correctCount; quizState.answeredCount = answeredCount;
+            const total = quizState.questions.length;
+            const scorePercent = Math.round((correctCount / total) * 100);
+            quizState.scorePercent = scorePercent;
+            saveQuizState();
+            
+            if (!userData.quizHistory) userData.quizHistory = [];
+            userData.quizHistory.push({ date: new Date().toLocaleString(), score: scorePercent, total: total, correct: correctCount });
+            if (userData.quizHistory.length > 50) userData.quizHistory = userData.quizHistory.slice(-50);
+            saveUserDataToCloud();
+
+            renderQuizView(document.getElementById('main-content'));
+            confetti({ particleCount: 300, spread: 100, origin: { y: 0.3 }, zIndex: 10000, colors: ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'] });
+            
+            setTimeout(() => {
+                const scrollContainer = document.getElementById('quiz-scroll-container');
+                if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+            }, 100);
+        };
+
+        window.clearQuizHistory = () => {
+            if(confirm('警告：確定要清除目前的作答紀錄嗎？\n(此動作將會遺失目前所有測驗進度)')) {
+                if(confirm('【第二次確認】真的要清除作答紀錄並放棄目前測驗嗎？\n按下「確定」將會清空並返回測驗首頁。')) {
+                    quizState = { active: false, currentQ: 0, score: 0, answers: [], questions: [], showExplanation: false, selectedAns: null };
+                    saveQuizState();
+                    const navStats = document.getElementById('nav-quiz-stats');
+                    if (navStats) { navStats.classList.add('hidden'); navStats.classList.remove('flex'); }
+                    renderQuizView(document.getElementById('main-content'));
+                }
+            }
+        };
+
+        window.renderMistakes = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.mistakes || userData.mistakes.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-amber-500 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-amber-200 text-7xl">🥳</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-amber-600 mb-4">太棒了！✨</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-amber-500/80">目前沒有任何錯題紀錄 🎉</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-dashed border-amber-200 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-amber-600 flex items-center"><span class="bg-white text-amber-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-amber-200 mr-5 shadow-sm">🩹</span>錯題本 📚</h2>
+                                <p class="text-amber-600/70 mt-3 ml-20 font-bold text-lg md:text-xl">收錄您在測驗中答錯的題目，溫故知新 🔄💡</p>
+                            </div>
+                            <button onclick="clearMistakes()" class="text-base md:text-xl text-amber-500 hover:text-white bg-white hover:bg-amber-400 px-5 py-3 rounded-full border-2 border-amber-200 shadow-sm font-bold transition-all flex items-center shrink-0 mb-2"><span class="mr-2">🗑️</span>清空</button>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${userData.mistakes.map((m, i) => `
+                                <div class="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border-2 border-dashed border-amber-200 w-full overflow-hidden relative group">
+                                    <h3 class="font-extrabold text-slate-800 mb-4 text-xl md:text-2xl break-words leading-relaxed flex items-start text-left">
+                                        <span class="text-amber-500 mr-3 text-xl font-black bg-amber-50 px-4 py-1.5 rounded-full border border-amber-200">🤔 Q</span>${m.q}
+                                    </h3>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 text-lg md:text-xl w-full font-medium text-left">
+                                        ${m.opts.map((opt, idx) => `
+                                            <div class="p-3 md:p-4 rounded-2xl break-words transition-all flex flex-col ${idx === m.ans ? 'bg-emerald-50 text-emerald-800 font-bold border-2 border-emerald-400 shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 font-bold ${idx === m.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === m.ans ? '<span class="ml-2 text-emerald-500 text-xl">✅</span>' : ''}
+                                                </div>
+                                                ${(m.exps && m.exps[idx]) ? `<div class="mt-2 p-2 md:p-3 rounded-xl text-sm md:text-base border ${idx === m.ans ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-white text-slate-600'} leading-normal font-medium"><span class="font-bold mr-2 ${idx === m.ans ? 'text-emerald-600' : 'text-slate-500'}">${idx === m.ans ? '🎯 解析：' : '💡 解析：'}</span>${m.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${m.generalExp ? `
+                                    <div class="mt-3 p-3 md:p-4 bg-amber-50 border-2 border-dashed border-amber-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-amber-800"><span class="mr-2">📝 重點補充：</span>${m.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                            `).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.clearMistakes = () => {
+            if(confirm('警告：確定要清空所有錯題紀錄嗎？\n(此動作無法復原)')) {
+                if(confirm('【第二次確認】真的要徹底清空錯題本嗎？\n按下「確定」將會刪除所有錯題資料。')) {
+                    userData.mistakes = []; saveUserDataToCloud(); renderMistakes();
+                }
+            }
+        };
+
+        window.renderFavorites = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if(!userData.favorites || userData.favorites.length === 0) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-rose-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-rose-200 text-7xl">💔</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-rose-500 mb-4">暫無收藏</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-rose-400/80 mb-10">在測驗中點擊愛心圖示即可收藏題目！ 📌✨</p>
+                        <button onclick="switchTab('quiz')" class="bg-rose-400 hover:bg-rose-500 text-white font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            const allQList = generate120Questions();
+            const favQuestions = userData.favorites.map(favText => {
+                return allQList.find(q => q.q === favText) || { q: favText, opts: [], ans: 0, exps: [], generalExp: '題目資料已遺失' };
+            });
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex items-end border-b-4 border-dashed border-rose-200 pb-5 mb-12">
+                            <h2 class="text-4xl md:text-5xl font-extrabold text-rose-500 flex items-center"><span class="bg-white text-rose-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-rose-200 mr-5 shadow-sm">💖</span>我的最愛 🌟</h2>
+                            <p class="text-rose-400/80 mt-3 ml-8 font-bold text-lg md:text-xl hidden sm:block mb-1">您專屬的重點筆記收藏夾 🎒✨</p>
+                        </div>
+                        <div class="space-y-10 md:space-y-12 w-full">
+                            ${favQuestions.map((qObj, i) => {
+                                if (qObj.opts.length === 0) return '';
+                                return `
+                                <div class="bg-white p-6 md:p-10 rounded-[2.5rem] shadow-sm border-2 border-dashed border-rose-200 w-full overflow-hidden relative group">
+                                    <div class="flex justify-between items-start mb-6">
+                                        <h3 class="font-extrabold text-slate-800 text-xl md:text-2xl break-words leading-relaxed flex items-start pr-6 flex-1 text-left">
+                                            <span class="text-rose-500 mr-3 text-xl font-black bg-rose-50 px-4 py-1.5 rounded-full border border-rose-200">📌 Q</span>${qObj.q}
+                                        </h3>
+                                        <button onclick="toggleFavoritePage('${qObj.q}')" class="text-[2.2rem] md:text-4xl hover:scale-110 transition-transform shrink-0 mt-1 focus:outline-none" title="移除最愛">
+                                            <i class="fa-solid fa-heart text-rose-400 drop-shadow-sm"></i>
+                                        </button>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 text-lg md:text-xl w-full font-medium text-left">
+                                        ${qObj.opts.map((opt, idx) => `
+                                            <div class="p-3 md:p-4 rounded-2xl break-words transition-all flex flex-col ${idx === qObj.ans ? 'bg-emerald-50 text-emerald-800 font-bold border-2 border-emerald-400 shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200'}">
+                                                <div class="flex items-start">
+                                                    <span class="inline-block w-8 font-bold ${idx === qObj.ans ? 'text-emerald-600' : 'text-slate-400'}">${String.fromCharCode(65+idx)}.</span> 
+                                                    <span class="flex-1">${opt}</span>
+                                                    ${idx === qObj.ans ? '<span class="ml-2 text-emerald-500 text-xl">✅</span>' : ''}
+                                                </div>
+                                                ${(qObj.exps && qObj.exps[idx]) ? `<div class="mt-2 p-2 md:p-3 rounded-xl text-sm md:text-base border ${idx === qObj.ans ? 'border-emerald-200 bg-white text-emerald-700' : 'border-slate-200 bg-white text-slate-600'} leading-normal font-medium"><span class="font-bold mr-2 ${idx === qObj.ans ? 'text-emerald-600' : 'text-slate-500'}">${idx === qObj.ans ? '🎯 解析：' : '💡 解析：'}</span>${qObj.exps[idx]}</div>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${qObj.generalExp ? `
+                                    <div class="mt-3 p-3 md:p-4 bg-rose-50 border-2 border-dashed border-rose-200 rounded-2xl relative overflow-hidden animate-fade-in text-left shadow-sm">
+                                        <p class="text-base md:text-lg leading-relaxed break-words whitespace-pre-wrap font-bold text-rose-800"><span class="mr-2">📝 重點補充：</span>${qObj.generalExp}</p>
+                                    </div>` : ''}
+                                </div>
+                                `;
+                            }).reverse().join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        window.toggleFavoritePage = (qText) => {
+            if (!userData.favorites) return;
+            const idx = userData.favorites.indexOf(qText);
+            if (idx > -1) {
+                if(confirm('確定要從最愛中移除此題嗎？')) {
+                    userData.favorites.splice(idx, 1);
+                    saveUserDataToCloud();
+                    renderFavorites();
+                }
+            }
+        };
+
+        window.renderHistory = (container) => {
+            if(!container) container = document.getElementById('main-content');
+            if((!userData.quizHistory || userData.quizHistory.length === 0) && (!userData.loginHistory || userData.loginHistory.length === 0)) {
+                container.innerHTML = `
+                    <div class="w-full flex-1 flex items-center justify-center p-4 md:p-6 text-purple-400 flex-col text-center relative z-10 animate-fade-in">
+                        <div class="w-40 h-40 bg-white rounded-full flex items-center justify-center mb-8 shadow-sm border-4 border-dashed border-purple-200 text-7xl">📜</div>
+                        <h2 class="text-4xl md:text-5xl font-extrabold text-purple-500 mb-4">暫無紀錄</h2>
+                        <p class="text-2xl md:text-3xl font-bold text-purple-400/80 mb-10">您還沒有完成任何測驗或留下足跡喔！</p>
+                        <button onclick="switchTab('quiz')" class="bg-purple-400 hover:bg-purple-500 text-white font-bold px-10 py-4 text-xl rounded-full shadow-md transition-colors">🚀 前往測驗</button>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="w-full flex-1 p-3 md:p-6 lg:p-10 overflow-y-auto overflow-x-hidden pb-24 relative z-10">
+                    <div class="w-full max-w-[96%] xl:max-w-[98%] mx-auto">
+                        <div class="flex justify-between items-end border-b-4 border-dashed border-purple-200 pb-5 mb-12">
+                            <div>
+                                <h2 class="text-4xl md:text-5xl font-extrabold text-purple-600 flex items-center"><span class="bg-white text-purple-500 w-14 h-14 flex items-center justify-center rounded-full border-2 border-purple-200 mr-5 shadow-sm">📜</span>作答與登入紀錄</h2>
+                                <p class="text-purple-500/70 mt-3 ml-20 font-bold text-lg md:text-xl">追蹤您的學習軌跡，跨裝置同步更新 ☁️</p>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                            <!-- 作答紀錄 -->
+                            <div class="bg-white rounded-[2rem] shadow-sm border-2 border-dashed border-purple-200 overflow-hidden">
+                                <div class="bg-purple-50 p-6 border-b-2 border-dashed border-purple-200">
+                                    <h3 class="text-3xl font-bold text-purple-700 flex items-center"><span class="mr-3 text-3xl">🎯</span>最近作答成績</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-5 max-h-[60vh] overflow-y-auto">
+                                    ${(userData.quizHistory || []).slice().reverse().map((h, i) => `
+                                        <div class="flex justify-between items-center p-5 rounded-2xl border-2 ${h.score >= 80 ? 'bg-emerald-50/50 border-emerald-200' : (h.score < 60 ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50 border-slate-200')} transition-all hover:shadow-sm">
+                                            <div>
+                                                <div class="font-bold text-slate-700 text-xl md:text-2xl">${h.date}</div>
+                                                <div class="text-lg text-slate-500 mt-2 font-medium">共 ${h.total} 題，答對 <span class="font-bold text-slate-600">${h.correct}</span> 題</div>
+                                            </div>
+                                            <div class="text-5xl font-black ${h.score >= 80 ? 'text-emerald-500' : (h.score < 60 ? 'text-rose-500' : 'text-amber-500')}">${h.score}<span class="text-2xl ml-1 font-bold">分</span></div>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-purple-300 text-center py-10 font-bold">目前還沒有測驗紀錄喔</p>'}
+                                </div>
+                            </div>
+
+                            <!-- 登入紀錄 -->
+                            <div class="bg-white rounded-[2rem] shadow-sm border-2 border-dashed border-indigo-200 overflow-hidden h-fit">
+                                <div class="bg-indigo-50 p-6 border-b-2 border-dashed border-indigo-200">
+                                    <h3 class="text-3xl font-bold text-indigo-700 flex items-center"><span class="mr-3 text-3xl">👣</span>最近登入足跡</h3>
+                                </div>
+                                <div class="p-6 md:p-8 space-y-4 max-h-[40vh] overflow-y-auto">
+                                    ${(userData.loginHistory || []).slice().reverse().map((time, i) => `
+                                        <div class="flex items-center p-4 rounded-xl border border-indigo-100 bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                                            <span class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500 mr-4 text-lg font-bold border border-indigo-200">${i+1}</span>
+                                            <span class="font-bold text-slate-600 text-xl">${new Date(time).toLocaleString()}</span>
+                                        </div>
+                                    `).join('') || '<p class="text-xl text-indigo-300 text-center py-10 font-bold">無登入紀錄</p>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        initApp();
+
+    </script>
+</body>
+</html>
